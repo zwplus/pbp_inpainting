@@ -27,11 +27,10 @@ from diffusers import AutoencoderKL,PNDMScheduler,DDIMScheduler,DDPMScheduler
 from diffusers.utils.import_utils import is_xformers_available
 
 from unet_2d_condition import UNet2DConditionModel as Unet
-from style_encoder import (
+from style_encoder_2 import (
     CLIP_Image_Extractor,
-    global_fusion,
-    people_local_fusion,
-    CLIP_Proj
+    CLIP_Proj,
+    clip_transformer_block
 )
 
 import wandb
@@ -83,7 +82,7 @@ class People_Background(pl.LightningModule):
         self.unet=Unet.from_pretrained(unet_config['ck_path'])
         new_in_channels=8
         with torch.no_grad():
-           
+
             conv_new = torch.nn.Conv2d(
                 in_channels=new_in_channels,
                 out_channels=self.unet.conv_in.out_channels, 
@@ -105,27 +104,10 @@ class People_Background(pl.LightningModule):
         self.clip.requires_grad_(False)
         
         self.people_proj=CLIP_Proj(**people_config['clip_proj'])
-        self.people_global_fusion=global_fusion(**people_config['global_fusion'])
-        self.people_local_fusion=people_local_fusion(**people_config['local_fusion'])
+        self.people_local_fusion=clip_transformer_block(**people_config['local_fusion'])
 
         self.controlnet_pose = ControlNetModel.from_unet(unet=self.unet)
 
-
-
-        unet=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/unet.bin',map_location='cpu')
-        self.unet.load_state_dict(unet)
-
-        people_proj=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/people_proj.bin',map_location='cpu')
-        self.people_proj.load_state_dict(people_proj)
-
-        people_global=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/people_global_fusion.bin',map_location='cpu')
-        self.people_global_fusion.load_state_dict(people_global)
-
-        people_local=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/people_local_fusion.bin',map_location='cpu')
-        self.people_local_fusion.load_state_dict(people_local)
-
-        control_net=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/control.bin',map_location='cpu')
-        self.controlnet_pose.load_state_dict(control_net)
 
         self.fid=FrechetInceptionDistance(normalize=True)
         self.ssim=SSIM(data_range=1.0)
@@ -144,9 +126,8 @@ class People_Background(pl.LightningModule):
         self.save_img_num=0
         rate=random.random()
 
-        background_img,part_img,people_img,pose_img,img=batch
+        background_img,part_img,pose_img,img=batch
         img=img.to(torch.bfloat16).to(self.device)
-        people_img=people_img.to(torch.bfloat16).to(self.device)
         part_img=part_img.to(torch.bfloat16).to(self.device)
         background_img=background_img.to(torch.bfloat16).to(self.device)
         pose_img=pose_img.to(torch.bfloat16).to(self.device)
@@ -154,11 +135,9 @@ class People_Background(pl.LightningModule):
 
         if rate <= self.condition_rate:
             people_feature=self.get_people_condition(
-                torch.zeros_like(people_img).to(torch.bfloat16).to(self.device),
                 torch.zeros_like(part_img).to(torch.bfloat16).to(self.device))
             background=self.img_to_laten(torch.zeros_like(background_img).to(torch.bfloat16).to(self.device))
         else:
-            people_feature=self.get_people_condition(people_img,part_img)
             background=self.img_to_laten(background_img)
         
         target=self.img_to_laten(img)
@@ -194,14 +173,13 @@ class People_Background(pl.LightningModule):
                         mid_block_additional_residual=mid_block_res_sample,).sample
     
     @torch.no_grad()
-    def sample(self,people_img:torch.FloatTensor,part_img:torch.FloatTensor,
+    def sample(self,part_img:torch.FloatTensor,
                 background_img:Optional[torch.FloatTensor]=None,pose_img:torch.FloatTensor=None):
 
-            latens_=torch.randn([people_img.shape[0],*self.laten_shape],dtype=torch.bfloat16).to(self.device)
+            latens_=torch.randn([background_img.shape[0],*self.laten_shape],dtype=torch.bfloat16).to(self.device)
 
-            uncond_people_feature=self.get_people_condition(torch.zeros_like(people_img).to(torch.bfloat16).to(self.device),
-                                                            torch.zeros_like(part_img).to(torch.bfloat16).to(self.device))
-            cond_people_feature=self.get_people_condition(people_img,part_img)
+            uncond_people_feature=self.get_people_condition(torch.zeros_like(part_img).to(torch.bfloat16).to(self.device))
+            cond_people_feature=self.get_people_condition(part_img)
             people_feature=torch.cat([cond_people_feature,uncond_people_feature])
 
             uncond_back=self.img_to_laten(torch.zeros_like(background_img).to(torch.bfloat16).to(self.device))
@@ -223,14 +201,13 @@ class People_Background(pl.LightningModule):
     @torch.no_grad()
     def validation_step(self,batch,batch_idx):
 
-        background_img,part_img,people_img,pose_img,img=batch
+        background_img,part_img,pose_img,img=batch
         img=img.to(torch.bfloat16).to(self.device)
-        people_img=people_img.to(torch.bfloat16).to(self.device)
         part_img=part_img.to(torch.bfloat16).to(self.device)
         background_img=background_img.to(torch.bfloat16).to(self.device)
         pose_img=pose_img.to(torch.bfloat16).to(self.device)
         
-        target_img=self.sample(people_img,part_img,background_img,pose_img)
+        target_img=self.sample(part_img,background_img,pose_img)
         target_img=self.laten_to_img(target_img)
         target_img=torch.clamp(target_img.detach()/2+0.5,0,1).detach()
         img=(img.detach()/2+0.5).to(torch.bfloat16)
@@ -268,22 +245,21 @@ class People_Background(pl.LightningModule):
 
                 logger.log_image(f'val/image',images=[show_img],step=self.global_step)
 
-    def get_people_condition(self,people_img,part_img):
+    def get_people_condition(self,part_img):
         part_img=rearrange(part_img,'b (l c) h w -> (b l) c h w',c=3).contiguous()
-        part_laten=self.laten_model.encoder.get_feature(part_img).detach()
 
-        people_global_feature=self.clip(people_img).detach()
-        people_global_feature=self.people_proj(people_global_feature)
+        part_laten=self.clip(part_img)[1].detach().unsqueeze(dim=1)
+        part_laten=self.people_proj(part_laten)
+        part_laten=rearrange(part_laten,'(b l) n d -> b (l n) d',l=self.local_num)
 
-        people_global_feature=self.people_global_fusion(part_laten,people_global_feature)
-        people_local_feature=self.people_local_fusion(people_global_feature)
+        people_local_feature=self.people_local_fusion(part_laten)
 
         return people_local_feature
 
     
     def configure_optimizers(self):
 
-        params =[i  for i in (list(self.people_proj.parameters())+list(self.people_global_fusion.parameters())
+        params =[i  for i in (list(self.people_proj.parameters())
                 +list(self.people_local_fusion.parameters())+list(self.unet.parameters())
                 +list(self.controlnet_pose.parameters()))
                     if i.requires_grad==True ]
@@ -306,10 +282,10 @@ class People_Background(pl.LightningModule):
 
 
 train_list=[
-    '/root/data2/user/zhangwei/Data/Human_Attribute_Pretrain/TikTokDance/train/titok_pairs.txt',
+    '/data/zwplus/tiktok/train/titok_pairs.txt',
 ]
 test_list=[
-   '/root/data2/user/zhangwei/Data/Human_Attribute_Pretrain/TikTokDance/test/titok_pairs.txt'
+    '/data/zwplus/tiktok/test/titok_pairs.txt'
 ]
 
 
@@ -318,24 +294,24 @@ if __name__=='__main__':
     test_dataset=diffusion_dataset(test_list,if_train=False)
 
     batch_size=32
-    logger=WandbLogger(save_dir='/root/data1/github/pbp_inpainting/',project='pose_inpainting')
+    logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting/',project='pose_inpainting_A800')
 
     train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=32)
     val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=32,drop_last=True)
 
     
     unet_config={
-        'ck_path':'/root/data1/github/pbp_inpainting/sd-2.1/fp32/unet-inpainting',
+        'ck_path':'/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/unet-inpainting',
     }
     people_config={
         'clip_image_extractor':
             {
-                'clip_path':'/root/data1/github/pbp_inpainting/sd-2.1/fp32/image'
+                'clip_path':'/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/image'
             },
         'clip_proj':{
             'in_channel':1280,
             'out_channel':1024,
-            'ck_path':'/root/data1/github/pbp_inpainting/sd-2.1/fp32/proj/proj.bin'
+            'ck_path':'/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/proj/proj.bin'
         },
         'global_fusion':{
             'inchannels':512,
@@ -346,27 +322,27 @@ if __name__=='__main__':
         'local_fusion':{
             'inchannels':1024,
             'mult':2,
-            'local_num':8,
-            'heads':8,
-            'head_dim':128,
+            'heads_num':16,
+            'head_dim':64,
         }
     }
 
 
-    vae_path='/root/data1/github/pbp_inpainting/sd-2.1/fp32/vae'
-    model=People_Background(unet_config,people_config,scheduler_path='/root/data1/github/pbp_inpainting/sd-2.1/fp32/scheduler',
-                            vae_path=vae_path,out_path='/root/data1/github/pbp_inpainting/output')
+    vae_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/vae'
+    model=People_Background(unet_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
+                            vae_path=vae_path,out_path='/home/user/zwplus/pbp_inpainting/output',learning_rate=8e-5
+                            ,warm_up=10000,batch_size=32)
     
     logger.watch(model)
 
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/root/data1/github/pbp_inpainting/checkpoint", 
-                                                       save_top_k=3, monitor="fid",mode='min',
-                                                       filename="pndm-{epoch:03d}-{fid:.3f}-{ssim:.3f}",)
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/home/user/zwplus/pbp_inpainting/checkpoint", 
+                                                    save_top_k=3, monitor="fid",mode='min',
+                                                    filename="pndm-{epoch:03d}-{fid:.3f}-{ssim:.3f}",)
     
     trainer=pl.Trainer(
-         accelerator='gpu',devices=3,logger=logger,callbacks=[checkpoint_callback],
-         default_root_dir='/root/data1/github/pbp_inpainting/checkpoint',
-        strategy="deepspeed_stage_2"
+        accelerator='gpu',devices=2,logger=logger,callbacks=[checkpoint_callback],
+        default_root_dir='/home/user/zwplus/pbp_inpainting/checkpoint',
+        strategy=DeepSpeedStrategy(allgather_bucket_size=5e8,reduce_bucket_size=5e8)
         ,precision='bf16-mixed',  #bf16-mixed
         accumulate_grad_batches=8,check_val_every_n_epoch=10,
         log_every_n_steps=200,max_epochs=600,
@@ -374,5 +350,3 @@ if __name__=='__main__':
     
     trainer.fit(model,train_loader,val_loader) 
     wandb.finish()
-
-    #DeepSpeedStrategy(logging_level=logging.INFO,allgather_bucket_size=5e8,reduce_bucket_size=5e8)

@@ -77,7 +77,7 @@ class diffusion_dataset(Dataset):
             back=Image.open(back)
             pose=Image.open(pose)
             raw=Image.open(raw)
-            people=Image.open(people)
+            # people=Image.open(people)
             
             if raw.size[0]>raw.size[1]:  # w>h
                 transform1=self.random_square_width
@@ -90,14 +90,14 @@ class diffusion_dataset(Dataset):
 
             raw=self.augmentation(raw, transform1, self.transformer_ae, state)
             pose=self.augmentation(pose, transform1, self.cond_transform, state)
-            people=self.transformer_clip(people).pixel_values[0]
+            # people=self.transformer_clip(people).pixel_values[0]
             back=self.augmentation(back,transform1,self.transformer_ae,state)
             ref_local_img=[]
             for i in os.listdir(local):
                 local_img=cv2.imread(os.path.join(local,i))
                 local_img=cv2.cvtColor(local_img,cv2.COLOR_BGR2RGB)
-                ref_local_img.append(self.augmentation(local_img,None,self.transformer_ae,state))
+                ref_local_img.append(self.transformer_clip(local_img).pixel_values[0])
             ref_local_img=torch.cat(ref_local_img,dim=0)
         except Exception as e:
             traceback.print_exc()
-        return back,ref_local_img,people,pose,raw
+        return back,ref_local_img,pose,raw
