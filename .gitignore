@@ -1,0 +1,13 @@
+*.pth
+*.pyc
+*.bin
+/lightning_logs
+/checkpoint
+/__pycache__
+/sd-image-variations-diffusers
+/raw
+*.txt
+/output
+*.jpg
+*.png
+/wandb
