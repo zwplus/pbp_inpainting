@@ -53,7 +53,7 @@ class diffusion_dataset(Dataset):
             torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
 
-        self.transformer_clip=CLIPImageProcessor.from_pretrained('/root/data1/github/pbp_inpainting/sd-2.1/feature_exract')
+        self.transformer_clip=CLIPImageProcessor.from_pretrained('/home/user/zwplus/pbp_inpainting/sd-2.1/feature_exract')
 
     def __len__(self,):
         return len(self.data_pairs)

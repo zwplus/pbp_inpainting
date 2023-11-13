@@ -138,6 +138,7 @@ class People_Background(pl.LightningModule):
                 torch.zeros_like(part_img).to(torch.bfloat16).to(self.device))
             background=self.img_to_laten(torch.zeros_like(background_img).to(torch.bfloat16).to(self.device))
         else:
+            people_feature=self.get_people_condition(part_img)
             background=self.img_to_laten(background_img)
         
         target=self.img_to_laten(img)
@@ -293,11 +294,11 @@ if __name__=='__main__':
     train_dataset=diffusion_dataset(train_list)
     test_dataset=diffusion_dataset(test_list,if_train=False)
 
-    batch_size=32
+    batch_size=48
     logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting/',project='pose_inpainting_A800')
 
-    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=32)
-    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=32,drop_last=True)
+    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=48)
+    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=48,drop_last=True)
 
     
     unet_config={
