@@ -30,7 +30,8 @@ from unet_2d_condition import UNet2DConditionModel as Unet
 from style_encoder_2 import (
     CLIP_Image_Extractor,
     CLIP_Proj,
-    clip_transformer_block
+    clip_transformer_block,
+    clip_to_cnn,
 )
 
 import wandb
@@ -103,7 +104,11 @@ class People_Background(pl.LightningModule):
         self.clip.eval()
         self.clip.requires_grad_(False)
         
+        self.clip_to_cnn=clip_to_cnn(**people_config['clip_to_cnn'])
+
         self.people_proj=CLIP_Proj(**people_config['clip_proj'])
+
+        
         self.people_local_fusion=clip_transformer_block(**people_config['local_fusion'])
 
         self.controlnet_pose = ControlNetModel.from_unet(unet=self.unet)
@@ -249,10 +254,16 @@ class People_Background(pl.LightningModule):
     def get_people_condition(self,part_img):
         part_img=rearrange(part_img,'b (l c) h w -> (b l) c h w',c=3).contiguous()
 
-        part_laten=self.clip(part_img)[1].detach().unsqueeze(dim=1)
+        part_local_laten,part_nolocal_laten=self.clip(part_img)
+        print(part_local_laten.shape)
+        part_local_laten=part_local_laten.detach()
+        part_nolocal_laten=part_nolocal_laten.unsequeeze(dim=1).detach()
+        #降低partlocal数目
+        part_local_laten=self.clip_to_cnn(part_local_laten)
+        part_laten=torch.concat((part_nolocal_laten,part_local_laten),dim=1)
+        
         part_laten=self.people_proj(part_laten)
         part_laten=rearrange(part_laten,'(b l) n d -> b (l n) d',l=self.local_num)
-
         people_local_feature=self.people_local_fusion(part_laten)
 
         return people_local_feature
@@ -260,7 +271,7 @@ class People_Background(pl.LightningModule):
     
     def configure_optimizers(self):
 
-        params =[i  for i in (list(self.people_proj.parameters())
+        params =[i  for i in (list(self.people_proj.parameters())+list(self.clip_to_cnn.parameters())
                 +list(self.people_local_fusion.parameters())+list(self.unet.parameters())
                 +list(self.controlnet_pose.parameters()))
                     if i.requires_grad==True ]
@@ -325,13 +336,18 @@ if __name__=='__main__':
             'mult':2,
             'heads_num':16,
             'head_dim':64,
+        },
+        'clip_to_cnn':{
+            'inchannels':1280,
+            'outchannels':1280,
+            'height':16,
         }
     }
 
 
     vae_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/vae'
     model=People_Background(unet_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
-                            vae_path=vae_path,out_path='/home/user/zwplus/pbp_inpainting/output',learning_rate=8e-5
+                            vae_path=vae_path,out_path='/home/user/zwplus/pbp_inpainting/output',learning_rate=1e-4
                             ,warm_up=10000,batch_size=32)
     
     logger.watch(model)

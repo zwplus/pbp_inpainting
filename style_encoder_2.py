@@ -1,10 +1,17 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import sys
 sys.path.append('/home/user/zwplus/paper/')
 from utils.attention import xformers_LinearCrossAttention
 from transformers import CLIPVisionModelWithProjection
 from einops import rearrange
+
+
+def zero_module(module):
+    for p in module.parameters():
+        nn.init.zeros_(p)
+    return module
 
 class CLIP_Image_Extractor(nn.Module):
     def __init__(self,clip_path='/root/data1/github/pose_transfer/sd-image-variations-diffusers/image_encoder') -> None:
@@ -17,7 +24,7 @@ class CLIP_Image_Extractor(nn.Module):
         last_hidden_states = self.clip_image_encoder(image).last_hidden_state
         last_hidden_states_norm = self.clip_image_encoder.vision_model.post_layernorm(last_hidden_states)
         image_embedding=last_hidden_states_norm[:,0,:]
-        return last_hidden_states_norm,image_embedding
+        return last_hidden_states_norm[:,1:,:],image_embedding
     def forward(self,image):
         return self.clip_encode_image_local(image)
 
@@ -84,6 +91,36 @@ class clip_transformer_block(nn.Module):
 
         part_feature=self.norm_out(part_feature)
         part_feature=self.proj_out(part_feature)+res
+
+        return part_feature
+
+
+class clip_to_cnn(nn.Module):
+    def __init__(self,inchannels:int=1024,outchannels:int=1024,height:int=16) -> None:
+        super().__init__()
+        self.height=height
+
+        self.conv_in=nn.Conv2d(in_channels=inchannels,out_channels=outchannels,kernel_size=3,padding=2)
+        self.norm=nn.GroupNorm(num_groups=32,num_channels=outchannels)
+        self.down_sample=nn.Conv2d(in_channels=outchannels,out_channels=outchannels,kernel_size=3,stride=2)
+
+        self.layer_norm=nn.LayerNorm(outchannels)
+        self.proj_out=nn.Linear(outchannels,outchannels)
+        
+        zero_module(self.proj_out)
+        
+    
+    def forward(self,part_feature:torch.FloatTensor):
+        part_feature=rearrange(part_feature,'b (h,w) c -> b c h w',h=self.height)
+        part_feature=self.conv_in(part_feature)
+        part_feature=self.norm(part_feature)
+        part_feature=F.gelu(part_feature)
+
+        part_feature=self.down_sample(part_feature)
+        part_feature=rearrange(part_feature,'b c h w -> b (h w) c')
+
+        part_feature=self.layer_norm(part_feature)
+        part_feature=self.proj_out(part_feature)
 
         return part_feature
 
