@@ -51,7 +51,7 @@ class People_Background(pl.LightningModule):
                 out_path='',
                 image_size=(4,32,32),condition_rate=0.1,condition_guidance=2,
                 warm_up=10000,learning_rate=0.0001,target_step=300000,
-                local_num=8,enable_xformers_memory_efficient_attention=True,batch_size=32):
+                local_num=8,enable_xformers_memory_efficient_attention=True,batch_size=64):
         super().__init__()
         self.save_hyperparameters()
 
@@ -289,14 +289,15 @@ class People_Background(pl.LightningModule):
 
 train_list=[
     '/data/zwplus/tiktok/train/titok_pre_pairs.txt',
-    '/data/zwplus/sshq/sshq_pairs.txt',
+    '/data/zwplus/sshq/train/sshq_pairs.txt',
     '/data/zwplus/Lin/lin_pairs.txt',
     '/data/zwplus/laion/laion_pairs.txt',
     '/data/zwplus/deepfashion/deepfashion_pairs.txt',
     '/data/zwplus/coco/coco_pairs.txt',
 ]
 test_list=[
-    '/root/data2/user/zhangwei/Data/Human_Attribute_Pretrain/TikTokDance/test/titok_pairs.txt'
+    '/data/zwplus/tiktok/val/titok_pre_pairs.txt',
+    '/data/zwplus/sshq/val/sshq_pairs.txt',
 ]
 
 
@@ -305,24 +306,24 @@ if __name__=='__main__':
     test_dataset=diffusion_dataset(test_list,if_train=False)
 
     batch_size=32
-    logger=WandbLogger(save_dir='/root/data1/github/pbp_inpainting/',project='pose_inpainting')
+    logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting/',project='pose_inpainting_master_pre')
 
     train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=32)
     val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=32,drop_last=True)
 
     
     unet_config={
-        'ck_path':'/root/data1/github/pbp_inpainting/sd-2.1/fp32/unet-inpainting',
+        'ck_path':'/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/unet-inpainting',
     }
     people_config={
         'clip_image_extractor':
             {
-                'clip_path':'/root/data1/github/pbp_inpainting/sd-2.1/fp32/image'
+                'clip_path':'/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/image'
             },
         'clip_proj':{
             'in_channel':1280,
             'out_channel':1024,
-            'ck_path':'/root/data1/github/pbp_inpainting/sd-2.1/fp32/proj/proj.bin'
+            'ck_path':'/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/proj/proj.bin'
         },
         'global_fusion':{
             'inchannels':512,
@@ -340,22 +341,22 @@ if __name__=='__main__':
     }
 
 
-    vae_path='/root/data1/github/pbp_inpainting/sd-2.1/fp32/vae'
-    model=People_Background(unet_config,people_config,scheduler_path='/root/data1/github/pbp_inpainting/sd-2.1/fp32/scheduler',
-                            vae_path=vae_path,out_path='/root/data1/github/pbp_inpainting/output')
+    vae_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/vae'
+    model=People_Background(unet_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
+                            vae_path=vae_path,out_path='/home/user/zwplus/pbp_inpainting/output',batch_size=32)
     
     logger.watch(model)
 
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/root/data1/github/pbp_inpainting/checkpoint", 
-                                                    save_top_k=3, monitor="fid",mode='min',
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/data/zwplus/pbp_inpainting/mater/checkpoint", 
+                                                    save_top_k=5, monitor="fid",mode='min',
                                                     filename="pndm-{epoch:03d}-{fid:.3f}-{ssim:.3f}",)
     
     trainer=pl.Trainer(
-        accelerator='gpu',devices=3,logger=logger,callbacks=[checkpoint_callback],
-        default_root_dir='/root/data1/github/pbp_inpainting/checkpoint',
-        strategy="deepspeed_stage_2"
-        ,precision='bf16-mixed',  #bf16-mixed
-        accumulate_grad_batches=8,check_val_every_n_epoch=10,
+        accelerator='gpu',devices=2,logger=logger,callbacks=[checkpoint_callback],
+        default_root_dir='/data/zwplus/pbp_inpainting/mater/checkpoint',
+        strategy='DDP',
+        precision='bf16-mixed',  #bf16-mixed
+        accumulate_grad_batches=24,check_val_every_n_epoch=3,
         log_every_n_steps=200,max_epochs=600,
         profiler='simple',benchmark=True,gradient_clip_val=1) 
     

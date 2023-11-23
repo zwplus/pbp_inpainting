@@ -23,8 +23,8 @@ class diffusion_dataset(Dataset):
         for i in pairs_list:
             i=i.strip()
             target_img_path,people_img_path,back_image_path,pose_img_path,local_img_dir=i.split(',')
-            # if not (os.path.isdir(local_img_dir) and os.path.isfile(people_img_path) and os.path.isfile(pose_img_path)):
-            #     print(local_img_dir)
+            if not (os.path.isdir(local_img_dir) and os.path.isfile(people_img_path) and os.path.isfile(pose_img_path)):
+                print(local_img_dir)
             self.data_pairs.append((target_img_path,people_img_path,back_image_path,pose_img_path,local_img_dir))
         
         self.random_square_height = transforms.Lambda(lambda img: transforms.functional.crop(img, top=int(torch.randint(0, img.height - img.width, (1,)).item()), left=0, height=img.width, width=img.width))
@@ -53,7 +53,7 @@ class diffusion_dataset(Dataset):
             torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
 
-        self.transformer_clip=CLIPImageProcessor.from_pretrained('/root/data1/github/pbp_inpainting/sd-2.1/feature_exract')
+        self.transformer_clip=CLIPImageProcessor.from_pretrained('/home/user/zwplus/pbp_inpainting/sd-2.1/feature_exract')
 
     def __len__(self,):
         return len(self.data_pairs)
@@ -99,5 +99,6 @@ class diffusion_dataset(Dataset):
                 ref_local_img.append(self.augmentation(local_img,None,self.transformer_ae,state))
             ref_local_img=torch.cat(ref_local_img,dim=0)
         except Exception as e:
+            print(raw)
             traceback.print_exc()
         return back,ref_local_img,people,pose,raw
