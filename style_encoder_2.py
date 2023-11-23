@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import sys
 sys.path.append('/home/user/zwplus/paper/')
-from utils.attention import xformers_LinearCrossAttention
+from utils.attention import xformers_LinearCrossAttention,flash_LinearCrossAttention
 from transformers import CLIPVisionModelWithProjection
 from einops import rearrange
 
@@ -111,7 +111,7 @@ class clip_to_cnn(nn.Module):
         
     
     def forward(self,part_feature:torch.FloatTensor):
-        part_feature=rearrange(part_feature,'b (h,w) c -> b c h w',h=self.height)
+        part_feature=rearrange(part_feature,'b (h w) c -> b c h w',h=self.height)
         part_feature=self.conv_in(part_feature)
         part_feature=self.norm(part_feature)
         part_feature=F.gelu(part_feature)
@@ -127,24 +127,27 @@ class clip_to_cnn(nn.Module):
 
 
 class people_global_fusion(nn.Module):
-    def __init__(self,inchannels=512,ch=768,local_num=8,heads=8) -> None:
+    def __init__(self,inchannels=512,ch=1024,heads_num=16,head_dim=64) -> None:
         super().__init__()
-        self.local_num=local_num
-        self.conv=nn.Conv2d(inchannels,ch,kernel_size=1)
-        self.norm=nn.GroupNorm(num_groups=32,num_channels=inchannels)
-        self.silu=nn.SiLU()
-        self.attn=xformers_LinearCrossAttention(ch,ch,heads=8,dim_head=ch//heads)
+        
+        self.down_block=nn.Sequential(
+            nn.GroupNorm(num_groups=32,num_channels=inchannels),
+            nn.SiLU(),
+            nn.Conv2d(inchannels,ch,kernel_size=1),
+            nn.GroupNorm(num_groups=32,num_channels=ch),
+            nn.SiLU(),
+            nn.Conv2d(in_channels=ch,out_channels=ch,kernel_size=3,stride=2),
+        )
+        
+        self.attn=flash_LinearCrossAttention(ch,ch,heads=heads_num,dim_head=head_dim)
     
-    def forward(self,x,full_people_feature):
-        B,C,H,W=x.shape
-        x=self.norm(x)
-        x=self.silu(x)
-        x=self.conv(x)
-        h=rearrange(x,'(b l) c h w -> b (l h w) c',l=self.local_num).contiguous()
-        h=self.attn(h,full_people_feature)
-        h=rearrange(h,'b (l h w) c -> (b l) c h w',l=self.local_num,h=H).contiguous()
-
-        return h+x
+    def forward(self,x,local_feature):
+        x=self.down_block(x)
+        
+        x=rearrange(x,'b c h w -> b (h w) c')
+        local_feature_res=local_feature
+        local_feature=self.attn(local_feature,x)
+        return local_feature+local_feature_res
 
 class people_local_fusion(nn.Module):
     def __init__(self,inchannels=768,mult=2,local_num=8,heads_num=8,head_dim=128,eps=1e-5,**kwargs) -> None:

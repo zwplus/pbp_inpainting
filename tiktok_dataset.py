@@ -44,6 +44,16 @@ class diffusion_dataset(Dataset):
             ]
         )
 
+        self.transformer_ae_2=transforms.Compose(
+            [
+            transforms.ToTensor(),
+            transforms.Resize(
+                (512,512),
+                interpolation=transforms.InterpolationMode.BILINEAR),
+            torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
+            ]
+        )
+
         self.cond_transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.RandomResizedCrop(
@@ -77,7 +87,7 @@ class diffusion_dataset(Dataset):
             back=Image.open(back)
             pose=Image.open(pose)
             raw=Image.open(raw)
-            # people=Image.open(people)
+            people=Image.open(people)
             
             if raw.size[0]>raw.size[1]:  # w>h
                 transform1=self.random_square_width
@@ -90,6 +100,7 @@ class diffusion_dataset(Dataset):
 
             raw=self.augmentation(raw, transform1, self.transformer_ae, state)
             pose=self.augmentation(pose, transform1, self.cond_transform, state)
+            people=self.augmentation(people, None, self.transformer_ae_2, state)
             # people=self.transformer_clip(people).pixel_values[0]
             back=self.augmentation(back,transform1,self.transformer_ae,state)
             ref_local_img=[]
@@ -100,4 +111,4 @@ class diffusion_dataset(Dataset):
             ref_local_img=torch.cat(ref_local_img,dim=0)
         except Exception as e:
             traceback.print_exc()
-        return back,ref_local_img,pose,raw
+        return back,ref_local_img,pose,raw,people
