@@ -50,10 +50,15 @@ class People_Background(pl.LightningModule):
                 vae_path:str=None,
                 out_path='',
                 image_size=(4,32,32),condition_rate=0.1,condition_guidance=2,
-                warm_up=3000,learning_rate=0.0001,target_step=300000,
+                warm_up=10000,learning_rate=0.0001,target_step=300000,
                 local_num=8,enable_xformers_memory_efficient_attention=True,batch_size=32):
         super().__init__()
         self.save_hyperparameters()
+
+        self.fid=FrechetInceptionDistance(normalize=True)
+        self.ssim=SSIM(data_range=1.0)
+        self.psnr=PSNR(data_range=1.0)
+        self.lpips=LPIPS(net_type='vgg',normalize=True)
 
         self.init_model(unet_config,people_config,vae_path,enable_xformers_memory_efficient_attention)
         self.train_scheduler=DDPMScheduler.from_pretrained(scheduler_path)
@@ -83,7 +88,7 @@ class People_Background(pl.LightningModule):
         self.unet=Unet.from_pretrained(unet_config['ck_path'])
         new_in_channels=8
         with torch.no_grad():
-           
+
             conv_new = torch.nn.Conv2d(
                 in_channels=new_in_channels,
                 out_channels=self.unet.conv_in.out_channels, 
@@ -109,28 +114,6 @@ class People_Background(pl.LightningModule):
         self.people_local_fusion=people_local_fusion(**people_config['local_fusion'])
 
         self.controlnet_pose = ControlNetModel.from_unet(unet=self.unet)
-
-
-
-        unet=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/unet.bin',map_location='cpu')
-        self.unet.load_state_dict(unet)
-
-        people_proj=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/people_proj.bin',map_location='cpu')
-        self.people_proj.load_state_dict(people_proj)
-
-        people_global=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/people_global_fusion.bin',map_location='cpu')
-        self.people_global_fusion.load_state_dict(people_global)
-
-        people_local=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/people_local_fusion.bin',map_location='cpu')
-        self.people_local_fusion.load_state_dict(people_local)
-
-        control_net=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/control.bin',map_location='cpu')
-        self.controlnet_pose.load_state_dict(control_net)
-
-        self.fid=FrechetInceptionDistance(normalize=True)
-        self.ssim=SSIM(data_range=1.0)
-        self.psnr=PSNR(data_range=1.0)
-        self.lpips=LPIPS(net_type='vgg',normalize=True)
 
         if enable_xformers_memory_efficient_attention:
             if is_xformers_available():
@@ -288,8 +271,7 @@ class People_Background(pl.LightningModule):
                 +list(self.controlnet_pose.parameters()))
                     if i.requires_grad==True ]
         optim = torch.optim.AdamW(params, lr=self.lr)
-        lambda_lr=lambda step: max(((self.global_step)/self.warm_up),5e-3) if (self.global_step)< self.warm_up else  \
-                                                                        max((self.target_step-self.global_step)/(self.target_step-self.warm_up),1e-3)
+        lambda_lr=lambda step: max(((self.global_step)/self.warm_up),5e-3) if (self.global_step)< self.warm_up else  1.0
         lr_scheduler=torch.optim.lr_scheduler.LambdaLR(optim,lambda_lr)
         return {'optimizer':optim,'lr_scheduler':{"scheduler":lr_scheduler,'monitor':'fid','interval':'step','frequency':1}}
 
@@ -306,10 +288,15 @@ class People_Background(pl.LightningModule):
 
 
 train_list=[
-    '/root/data2/user/zhangwei/Data/Human_Attribute_Pretrain/TikTokDance/train/titok_pairs.txt',
+    '/data/zwplus/tiktok/train/titok_pre_pairs.txt',
+    '/data/zwplus/sshq/sshq_pairs.txt',
+    '/data/zwplus/Lin/lin_pairs.txt',
+    '/data/zwplus/laion/laion_pairs.txt',
+    '/data/zwplus/deepfashion/deepfashion_pairs.txt',
+    '/data/zwplus/coco/coco_pairs.txt',
 ]
 test_list=[
-   '/root/data2/user/zhangwei/Data/Human_Attribute_Pretrain/TikTokDance/test/titok_pairs.txt'
+    '/root/data2/user/zhangwei/Data/Human_Attribute_Pretrain/TikTokDance/test/titok_pairs.txt'
 ]
 
 
@@ -360,12 +347,12 @@ if __name__=='__main__':
     logger.watch(model)
 
     checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/root/data1/github/pbp_inpainting/checkpoint", 
-                                                       save_top_k=3, monitor="fid",mode='min',
-                                                       filename="pndm-{epoch:03d}-{fid:.3f}-{ssim:.3f}",)
+                                                    save_top_k=3, monitor="fid",mode='min',
+                                                    filename="pndm-{epoch:03d}-{fid:.3f}-{ssim:.3f}",)
     
     trainer=pl.Trainer(
-         accelerator='gpu',devices=3,logger=logger,callbacks=[checkpoint_callback],
-         default_root_dir='/root/data1/github/pbp_inpainting/checkpoint',
+        accelerator='gpu',devices=3,logger=logger,callbacks=[checkpoint_callback],
+        default_root_dir='/root/data1/github/pbp_inpainting/checkpoint',
         strategy="deepspeed_stage_2"
         ,precision='bf16-mixed',  #bf16-mixed
         accumulate_grad_batches=8,check_val_every_n_epoch=10,
