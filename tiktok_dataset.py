@@ -23,9 +23,17 @@ class diffusion_dataset(Dataset):
         for i in pairs_list:
             i=i.strip()
             target_img_path,people_img_path,back_image_path,pose_img_path,local_img_dir=i.split(',')
-            if not (os.path.isdir(local_img_dir) and os.path.isfile(people_img_path) and os.path.isfile(pose_img_path)):
+            if not ( os.path.isdir(local_img_dir) and os.path.isfile(people_img_path) and os.path.isfile(pose_img_path)
+                    and os.path.isfile(back_image_path) and os.path.isfile(target_img_path)):
                 print(local_img_dir)
-            self.data_pairs.append((target_img_path,people_img_path,back_image_path,pose_img_path,local_img_dir))
+            else:
+                c=0
+                for i in os.listdir(local_img_dir):
+                    c+=1
+                if c<8:
+                    print(local_img_dir)
+                else:
+                    self.data_pairs.append((target_img_path,people_img_path,back_image_path,pose_img_path,local_img_dir))
         
         self.random_square_height = transforms.Lambda(lambda img: transforms.functional.crop(img, top=int(torch.randint(0, img.height - img.width, (1,)).item()), left=0, height=img.width, width=img.width))
         self.random_square_width = transforms.Lambda(lambda img: transforms.functional.crop(img, top=0, left=int(torch.randint(0, img.width - img.height, (1,)).item()), height=img.height, width=img.height))
@@ -98,6 +106,7 @@ class diffusion_dataset(Dataset):
                 local_img=cv2.cvtColor(local_img,cv2.COLOR_BGR2RGB)
                 ref_local_img.append(self.augmentation(local_img,None,self.transformer_ae,state))
             ref_local_img=torch.cat(ref_local_img,dim=0)
+            
         except Exception as e:
             print(raw)
             traceback.print_exc()

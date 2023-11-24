@@ -301,6 +301,8 @@ test_list=[
 ]
 
 
+
+
 if __name__=='__main__':
     train_dataset=diffusion_dataset(train_list)
     test_dataset=diffusion_dataset(test_list,if_train=False)
@@ -308,8 +310,8 @@ if __name__=='__main__':
     batch_size=32
     logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting/',project='pose_inpainting_master_pre')
 
-    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=32)
-    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=32,drop_last=True)
+    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=24)
+    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=24,drop_last=True)
 
     
     unet_config={
@@ -343,7 +345,7 @@ if __name__=='__main__':
 
     vae_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/vae'
     model=People_Background(unet_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
-                            vae_path=vae_path,out_path='/home/user/zwplus/pbp_inpainting/output',batch_size=32)
+                            vae_path=vae_path,out_path='/home/user/zwplus/pbp_inpainting/output',batch_size=24)
     
     logger.watch(model)
 
@@ -354,7 +356,7 @@ if __name__=='__main__':
     trainer=pl.Trainer(
         accelerator='gpu',devices=2,logger=logger,callbacks=[checkpoint_callback],
         default_root_dir='/data/zwplus/pbp_inpainting/mater/checkpoint',
-        strategy='DDP',
+        strategy=DeepSpeedStrategy(logging_level=logging.INFO,allgather_bucket_size=5e8,reduce_bucket_size=5e8),
         precision='bf16-mixed',  #bf16-mixed
         accumulate_grad_batches=24,check_val_every_n_epoch=3,
         log_every_n_steps=200,max_epochs=600,
