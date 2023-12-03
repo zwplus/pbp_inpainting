@@ -1,8 +1,8 @@
 import torch
 from collections import OrderedDict
-ck=torch.load('/root/data1/github/pbp_inpainting/sd-2.1/test/control.bin')
+ck=torch.load('/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/unet-inpainting/diffusion_pytorch_model.bin')
 print(ck.keys())
-print(ck['conv_in.weight'].dtype)
+print(ck['conv_in.weight'].shape)
 
 # unet_dict=OrderedDict()
 # controlnet_dict=OrderedDict()

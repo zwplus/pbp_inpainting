@@ -13,7 +13,7 @@
 # limitations under the License.
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
-
+from copy import deepcopy
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -209,7 +209,7 @@ class ControlNetModel(ModelMixin, ConfigMixin):
         #参照UNet下采样部分创建UNet
 
         for i, down_block_type in enumerate(down_block_types):
- 
+
             input_channel = output_channel
             output_channel = block_out_channels[i]
             is_final_block = i == len(block_out_channels) - 1
@@ -286,7 +286,7 @@ class ControlNetModel(ModelMixin, ConfigMixin):
         """
         # print(unet.config.down_block_types)
         controlnet = cls(
-            in_channels=8,
+            in_channels=11,
             flip_sin_to_cos=unet.config.flip_sin_to_cos,
             freq_shift=unet.config.freq_shift,
             down_block_types=unet.config.down_block_types,
@@ -325,6 +325,26 @@ class ControlNetModel(ModelMixin, ConfigMixin):
 
             if controlnet.args and controlnet.args.refer_sdvae and controlnet.use_sd_vae: # init controlnet condition embedding with unet convin
                 controlnet.controlnet_cond_embedding.conv_in.load_state_dict(unet.conv_in.state_dict())
+
+        new_in_channels=8+8*4
+        with torch.no_grad():
+
+            conv_new = torch.nn.Conv2d(
+                in_channels=new_in_channels,
+                out_channels=controlnet.conv_in.out_channels, 
+                kernel_size=3,
+                padding=1,
+            )
+
+            torch.nn.init.kaiming_normal_(conv_new.weight)  
+            conv_new.weight.data = conv_new.weight.data * 0.  
+
+            conv_new.weight.data = torch.concat([controlnet.conv_in.weight.data[:,:8],
+                                                deepcopy(controlnet.conv_in.weight.data[:, 4:8]).repeat(1,8,1,1)],dim=1)    
+            conv_new.bias.data = controlnet.conv_in.bias.data  
+
+            controlnet.conv_in = conv_new  
+            controlnet.config['in_channels'] = new_in_channels 
 
         return controlnet
 
