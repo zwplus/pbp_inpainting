@@ -104,7 +104,7 @@ class People_Background(pl.LightningModule):
             conv_new.weight.data = torch.concat([self.unet.conv_in.weight.data[:,:8],
                                                 deepcopy(self.unet.conv_in.weight.data[:, 8][:,None,:,:]).repeat((1,3,1,1))
                                                 ],dim=1)
-            print(conv_new.weight.data.shape)
+
             conv_new.bias.data = self.unet.conv_in.bias.data  
 
             self.unet.conv_in = conv_new  
@@ -113,11 +113,8 @@ class People_Background(pl.LightningModule):
         self.clip=CLIP_Image_Extractor(**people_config['clip_image_extractor'])
         self.clip.eval()
         self.clip.requires_grad_(False)
-        
         self.people_proj=CLIP_Proj(**people_config['clip_proj'])
-        self.people_global_fusion=global_fusion(**people_config['global_fusion'])
-        self.people_local_fusion=people_local_fusion(**people_config['local_fusion'])
-
+        
         self.controlnet_pose = ControlNetModel.from_unet(unet=self.unet)
 
         if enable_xformers_memory_efficient_attention:
@@ -132,34 +129,34 @@ class People_Background(pl.LightningModule):
         self.save_img_num=0
         rate=random.random()
 
-        background_img,part_img,people_img,pose_img,img=batch
-        img=img.to(torch.bfloat16).to(self.device)
-        people_img=people_img.to(torch.bfloat16).to(self.device)
-        part_img=part_img.to(torch.bfloat16).to(self.device)
-        background_img=background_img.to(torch.bfloat16).to(self.device)
-        pose_img=pose_img.to(torch.bfloat16).to(self.device)
+        background_img,people_vae,people_clip,pose_img,img=batch
+        img=img.to(torch.float16).to(self.device)
+        people_vae=people_vae.to(torch.float16).to(self.device)
+        people_clip=people_clip.to(torch.float16).to(self.device)
+        background_img=background_img.to(torch.float16).to(self.device)
+        pose_img=pose_img.to(torch.float16).to(self.device)
             
 
         if rate <= self.condition_rate:
-            people_feature,part_laten=self.get_people_condition(
-                torch.zeros_like(people_img).to(torch.bfloat16).to(self.device),
-                torch.zeros_like(part_img).to(torch.bfloat16).to(self.device))
-            background=self.img_to_laten(torch.zeros_like(background_img).to(torch.bfloat16).to(self.device))[0]
+            people_feature,people_laten=self.get_people_condition(torch.zeros_like(people_vae).to(torch.float16).to(self.device)
+                ,torch.zeros_like(people_clip).to(torch.float16).to(self.device))
+            background=self.img_to_laten(torch.zeros_like(background_img).to(torch.float16).to(self.device))[0]
         else:
-            people_feature,part_laten=self.get_people_condition(people_img,part_img)
+            people_feature,people_laten=self.get_people_condition(people_vae,people_clip)
             background=self.img_to_laten(background_img)[0]
 
         
         target=self.img_to_laten(img)[0]
         
 
-        noise=torch.randn(target.shape,dtype=torch.bfloat16).to(self.device)
+        noise=torch.randn(target.shape,dtype=torch.float16).to(self.device)
         timesteps=torch.randint(0,self.train_scheduler.config.num_train_timesteps,(target.shape[0],)).long().to(self.device)
-        noisy_image=self.train_scheduler.add_noise(target,noise,timesteps).to(torch.bfloat16)
+        noisy_image=self.train_scheduler.add_noise(target,noise,timesteps).to(torch.float16)
         
         pose_img_laten=transforms.Resize((32,32))(pose_img)
+
         laten=torch.cat([noisy_image,background,pose_img_laten],dim=1)
-        control_laten=torch.cat([noisy_image,background,part_laten],dim=1)
+        control_laten=torch.cat([noisy_image,people_laten],dim=1)
         model_out = self(laten,control_laten, timesteps,people_feature,pose_img)
 
         loss=F.mse_loss(model_out,noise)
@@ -175,28 +172,32 @@ class People_Background(pl.LightningModule):
 
     def forward(self,laten:torch.FloatTensor=None,control_laten:torch.FloatTensor=None,timesteps:torch.Tensor=None,
                 people_feature:torch.FloatTensor=None,pose_img:torch.FloatTensor=None): 
-                down_block_res_samples, mid_block_res_sample=self.controlnet_pose(
+                
+                down_block_res_samples, mid_block_res_sample,attn_sample=self.controlnet_pose(
                         sample=control_laten,timestep=timesteps,
                         encoder_hidden_states=people_feature, # both controlnet path use the refer latents
                         controlnet_cond=pose_img, conditioning_scale=1.0, return_dict=False)
+                
                 return self.unet(sample=laten,timestep=timesteps,
-                        encoder_hidden_states=people_feature,
+                        encoder_hidden_states=attn_sample,
                         down_block_additional_residuals=down_block_res_samples,
                         mid_block_additional_residual=mid_block_res_sample,).sample
     
     @torch.no_grad()
-    def sample(self,people_img:torch.FloatTensor,part_img:torch.FloatTensor,
+    def sample(self,people_vae:torch.FloatTensor,people_clip:torch.FloatTensor,
                 background_img:Optional[torch.FloatTensor]=None,pose_img:torch.FloatTensor=None):
 
-            latens_=torch.randn([people_img.shape[0],*self.laten_shape],dtype=torch.bfloat16).to(self.device)
+            latens_=torch.randn([people_vae.shape[0],*self.laten_shape],dtype=torch.float16).to(self.device)
 
-            uncond_people_feature,uncond_part_laten=self.get_people_condition(torch.zeros_like(people_img).to(torch.bfloat16).to(self.device),
-                                                            torch.zeros_like(part_img).to(torch.bfloat16).to(self.device))
-            cond_people_feature,cond_part_laten=self.get_people_condition(people_img,part_img)
+            uncond_people_feature,uncond_people_laten=self.get_people_condition(
+                                                        torch.zeros_like(people_vae).to(torch.float16).to(self.device),
+                                                        torch.zeros_like(people_clip).to(torch.float16).to(self.device)
+                                                        )
+            cond_people_feature,cond_people_laten=self.get_people_condition(people_vae,people_clip)
             people_feature=torch.cat([cond_people_feature,uncond_people_feature])
-            part_laten=torch.cat([cond_part_laten,uncond_part_laten])
+            people_laten=torch.cat([cond_people_laten,uncond_people_laten])
 
-            uncond_back=self.img_to_laten(torch.zeros_like(background_img).to(torch.bfloat16).to(self.device))[0]
+            uncond_back=self.img_to_laten(torch.zeros_like(background_img).to(torch.float16).to(self.device))[0]
             cond_back=self.img_to_laten(background_img)[0]
             back=torch.cat([cond_back,uncond_back])
             
@@ -205,7 +206,7 @@ class People_Background(pl.LightningModule):
 
             for t in self.test_scheduler.timesteps:
                 latens=torch.cat([latens_]*2)
-                control_latens=torch.cat([latens,back,part_laten],dim=1)
+                control_latens=torch.cat([latens,people_laten],dim=1)
                 latens=torch.cat([latens,back,pose_img_laten],dim=1)
                 
 
@@ -219,17 +220,17 @@ class People_Background(pl.LightningModule):
     @torch.no_grad()
     def validation_step(self,batch,batch_idx):
 
-        background_img,part_img,people_img,pose_img,img=batch
-        img=img.to(torch.bfloat16).to(self.device)
-        people_img=people_img.to(torch.bfloat16).to(self.device)
-        part_img=part_img.to(torch.bfloat16).to(self.device)
-        background_img=background_img.to(torch.bfloat16).to(self.device)
-        pose_img=pose_img.to(torch.bfloat16).to(self.device)
+        background_img,people_vae,people_clip,pose_img,img=batch
+        img=img.to(torch.float16).to(self.device)
+        people_vae=people_vae.to(torch.float16).to(self.device)
+        people_clip=people_clip.to(torch.float16).to(self.device)
+        background_img=background_img.to(torch.float16).to(self.device)
+        pose_img=pose_img.to(torch.float16).to(self.device)
         
-        target_img=self.sample(people_img,part_img,background_img,pose_img)
+        target_img=self.sample(people_vae,people_clip,background_img,pose_img)
         target_img=self.laten_to_img(target_img)
         target_img=torch.clamp(target_img.detach()/2+0.5,0,1).detach()
-        img=(img.detach()/2+0.5).to(torch.bfloat16)
+        img=(img.detach()/2+0.5).to(torch.float16)
         pose_img=pose_img.detach().cpu()/2+0.5
             
 
@@ -264,25 +265,19 @@ class People_Background(pl.LightningModule):
 
                 logger.log_image(f'val/image',images=[show_img],step=self.global_step)
 
-    def get_people_condition(self,people_img,part_img):
-        part_img=rearrange(part_img,'b (l c) h w -> (b l) c h w',c=3).contiguous()
-        part_laten,part_feature=self.img_to_laten(part_img)
+    def get_people_condition(self,people_vae,people_clip):
+        people_laten=self.img_to_laten(people_vae)[0]
 
-        people_global_feature=self.clip(people_img).detach()
+        people_global_feature=self.clip(people_clip).detach()
         people_global_feature=self.people_proj(people_global_feature)
 
-        people_feature=self.people_global_fusion(part_feature,people_global_feature)
-        people_local_feature=self.people_local_fusion(people_feature)
-
-        part_laten=rearrange(part_laten,'(b l) c h w -> b (l c) h w',l=8)
-
-        return people_local_feature,part_laten
+        return people_global_feature,people_laten
 
     
     def configure_optimizers(self):
 
-        params =[i  for i in (list(self.people_proj.parameters())+list(self.people_global_fusion.parameters())
-                +list(self.people_local_fusion.parameters())+list(self.unet.parameters())
+        params =[i  for i in (list(self.people_proj.parameters())
+                +list(self.unet.parameters())
                 +list(self.controlnet_pose.parameters()))
                     if i.requires_grad==True ]
         optim = torch.optim.AdamW(params, lr=self.lr)
@@ -304,10 +299,10 @@ class People_Background(pl.LightningModule):
 
 
 train_list=[
-    '/data/zwplus/tiktok/train/titok_pairs.txt',
+    '/data/zwplus/tiktok/train/tiktok_train.txt',
 ]
 test_list=[
-    '/data/zwplus/tiktok/test/titok_pairs.txt',
+    '/data/zwplus/tiktok/test/tiktok_test.txt',
 ]
 
 
@@ -317,11 +312,11 @@ if __name__=='__main__':
     train_dataset=diffusion_dataset(train_list)
     test_dataset=diffusion_dataset(test_list,if_train=False)
 
-    batch_size=32
-    logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting/',project='pose_inpainting_new_control')
+    batch_size=64
+    logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting/',project='pose_inpainting_new_control_2')
 
-    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=24)
-    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=24,drop_last=True)
+    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=40)
+    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=40,drop_last=True)
 
     
     unet_config={
@@ -355,11 +350,11 @@ if __name__=='__main__':
 
     vae_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/vae'
     model=People_Background(unet_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
-                            vae_path=vae_path,out_path='/data/zwplus/pbp_inpainting/new_control/output',batch_size=24)
+                            vae_path=vae_path,out_path='/data/zwplus/pbp_inpainting/new_control_2/output',batch_size=batch_size)
     
     logger.watch(model)
 
-    checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/data/zwplus/pbp_inpainting/new_control/checkpoint", 
+    checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/data/zwplus/pbp_inpainting/new_control_2/checkpoint", 
                                                     save_top_k=5, monitor="fid",mode='min',
                                                     filename="pndm-{epoch:03d}-{fid:.3f}-{ssim:.3f}",)
     
@@ -367,8 +362,8 @@ if __name__=='__main__':
         accelerator='gpu',devices=2,logger=logger,callbacks=[checkpoint_callback],
         default_root_dir='/data/zwplus/pbp_inpainting/new_control/checkpoint',
         strategy=DeepSpeedStrategy(logging_level=logging.INFO,allgather_bucket_size=5e8,reduce_bucket_size=5e8),
-        precision='bf16-mixed',  #bf16-mixed
-        accumulate_grad_batches=24,check_val_every_n_epoch=3,
+        precision='16-mixed',  #bf16-mixed
+        accumulate_grad_batches=4,check_val_every_n_epoch=5,
         log_every_n_steps=200,max_epochs=600,
         profiler='simple',benchmark=True,gradient_clip_val=1) 
     

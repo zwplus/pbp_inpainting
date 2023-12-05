@@ -488,7 +488,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         self,
         sample: torch.FloatTensor,
         timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states:torch.Tensor,      #[(batch, sequence_length, feature_dim)]
+        encoder_hidden_states:List[torch.Tensor],      #[(batch, sequence_length, feature_dim)]
         class_labels: Optional[torch.Tensor] = None,
         timestep_cond: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -578,16 +578,17 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         # 3. down
         down_block_res_samples = (sample,)
+        temp_cross_attention_dim=0
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
                     temb=emb,
-                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states=encoder_hidden_states[temp_cross_attention_dim],
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
                 )
-                # temp_cross_attention_dim+=1
+                temp_cross_attention_dim+=1
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
 
@@ -609,11 +610,11 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             sample = self.mid_block(
                 sample,
                 emb,
-                encoder_hidden_states=encoder_hidden_states,
+                encoder_hidden_states=encoder_hidden_states[temp_cross_attention_dim],
                 attention_mask=attention_mask,
                 cross_attention_kwargs=cross_attention_kwargs,
             )
-            # temp_cross_attention_dim-=1
+            temp_cross_attention_dim-=1
         if mid_block_additional_residual is not None:
             sample = sample + mid_block_additional_residual
 
@@ -635,12 +636,12 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     hidden_states=sample,
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
-                    encoder_hidden_states=encoder_hidden_states,
+                    encoder_hidden_states=encoder_hidden_states[temp_cross_attention_dim],
                     cross_attention_kwargs=cross_attention_kwargs,
                     upsample_size=upsample_size,
                     attention_mask=attention_mask,
                 )
-                # temp_cross_attention_dim-=1
+                temp_cross_attention_dim-=1
             else:
                 sample = upsample_block(
                     hidden_states=sample, temb=emb, res_hidden_states_tuple=res_samples, upsample_size=upsample_size

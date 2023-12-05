@@ -23,14 +23,14 @@ from diffusers.utils import BaseOutput, logging
 from diffusers.models.cross_attention import AttnProcessor
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.models.unet_2d_blocks import (
+from unet_2d_blocks import (
     CrossAttnDownBlock2D,
     DownBlock2D,
     UNetMidBlock2DCrossAttn,
     get_down_block,
 )
 from diffusers.models.unet_2d_condition import UNet2DConditionModel
-
+from einops import rearrange
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 
@@ -39,6 +39,7 @@ logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
 class ControlNetOutput(BaseOutput):
     down_block_res_samples: Tuple[torch.Tensor]
     mid_block_res_sample: torch.Tensor
+    attn_sample:List[torch.Tensor]
 
 
 class ControlNetConditioningEmbedding(nn.Module):
@@ -265,7 +266,9 @@ class ControlNetModel(ModelMixin, ConfigMixin):
                 upcast_attention=upcast_attention,
             )
 
-    
+        self.controlnet_attn_blocks=nn.ModuleList(
+            [ zero_module(nn.Linear(i,1024)) for i in [320,640,1280,1280]]
+        )
 
     @classmethod
     def from_unet(
@@ -326,7 +329,7 @@ class ControlNetModel(ModelMixin, ConfigMixin):
             if controlnet.args and controlnet.args.refer_sdvae and controlnet.use_sd_vae: # init controlnet condition embedding with unet convin
                 controlnet.controlnet_cond_embedding.conv_in.load_state_dict(unet.conv_in.state_dict())
 
-        new_in_channels=8+8*4
+        new_in_channels=4+4
         with torch.no_grad():
 
             conv_new = torch.nn.Conv2d(
@@ -339,8 +342,7 @@ class ControlNetModel(ModelMixin, ConfigMixin):
             torch.nn.init.kaiming_normal_(conv_new.weight)  
             conv_new.weight.data = conv_new.weight.data * 0.  
 
-            conv_new.weight.data = torch.concat([controlnet.conv_in.weight.data[:,:8],
-                                                deepcopy(controlnet.conv_in.weight.data[:, 4:8]).repeat(1,8,1,1)],dim=1)    
+            conv_new.weight.data = controlnet.conv_in.weight.data[:,:8]    
             conv_new.bias.data = controlnet.conv_in.bias.data  
 
             controlnet.conv_in = conv_new  
@@ -549,15 +551,17 @@ class ControlNetModel(ModelMixin, ConfigMixin):
 
         # 3. down
         down_block_res_samples = (sample,)
+        down_block_attn_samples=[]
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
-                sample, res_samples = downsample_block(
+                sample, res_samples,attn_states = downsample_block(
                     hidden_states=sample,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
                 )
+                down_block_attn_samples.append(attn_states)
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
 
@@ -572,8 +576,11 @@ class ControlNetModel(ModelMixin, ConfigMixin):
                 attention_mask=attention_mask,
                 cross_attention_kwargs=cross_attention_kwargs,
             )
+            
 
-        # 5. Control net blocks
+        attn_sample=down_block_attn_samples+[sample]
+
+        #5. Control net blocks
 
         controlnet_down_block_res_samples = ()
 
@@ -588,12 +595,17 @@ class ControlNetModel(ModelMixin, ConfigMixin):
         # 6. scaling
         down_block_res_samples = [sample * conditioning_scale for sample in down_block_res_samples]
         mid_block_res_sample *= conditioning_scale
+        
+        attn_sample=[rearrange(i,'b c h w -> b (h w) c').contiguous() for i in attn_sample]
+        attn_samples=[]
+        for attn,attn_proj in zip(attn_sample,self.controlnet_attn_blocks):
+            attn_samples.append(attn_proj(attn))
 
         if not return_dict:
-            return (down_block_res_samples, mid_block_res_sample)
-
+            return (down_block_res_samples, mid_block_res_sample,attn_samples)
+        
         return ControlNetOutput(
-            down_block_res_samples=down_block_res_samples, mid_block_res_sample=mid_block_res_sample
+            down_block_res_samples=down_block_res_samples, mid_block_res_sample=mid_block_res_sample,attn_sample=attn_sample
         )
 
 

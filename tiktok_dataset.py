@@ -23,9 +23,13 @@ class diffusion_dataset(Dataset):
         for i in pairs_list:
             i=i.strip()
             target_img_path,people_img_path,back_image_path,pose_img_path,local_img_dir=i.split(',')
+            people_img_path=os.path.splitext(people_img_path)[0]
+            people_img_path=people_img_path.split('/')[:-3]+['groundsam_people_img']+people_img_path.split('/')[-2:]
+            people_img_path='/'.join(people_img_path)+'.png'
+            
             if not ( os.path.isdir(local_img_dir) and os.path.isfile(people_img_path) and os.path.isfile(pose_img_path)
                     and os.path.isfile(back_image_path) and os.path.isfile(target_img_path)):
-                print(local_img_dir)
+                print(people_img_path)
             else:
                 c=0
                 for i in os.listdir(local_img_dir):
@@ -85,6 +89,7 @@ class diffusion_dataset(Dataset):
             back=Image.open(back)
             pose=Image.open(pose)
             raw=Image.open(raw)
+            
             people=Image.open(people)
             
             if raw.size[0]>raw.size[1]:  # w>h
@@ -98,16 +103,17 @@ class diffusion_dataset(Dataset):
 
             raw=self.augmentation(raw, transform1, self.transformer_ae, state)
             pose=self.augmentation(pose, transform1, self.cond_transform, state)
-            people=self.transformer_clip(people).pixel_values[0]
+            people_vae=self.augmentation(people,transform1,self.transformer_ae,state)
+            people_clip=self.transformer_clip(people).pixel_values[0]
             back=self.augmentation(back,transform1,self.transformer_ae,state)
-            ref_local_img=[]
-            for i in os.listdir(local):
-                local_img=cv2.imread(os.path.join(local,i))
-                local_img=cv2.cvtColor(local_img,cv2.COLOR_BGR2RGB)
-                ref_local_img.append(self.augmentation(local_img,None,self.transformer_ae,state))
-            ref_local_img=torch.cat(ref_local_img,dim=0)
+            # ref_local_img=[]
+            # for i in os.listdir(local):
+            #     local_img=cv2.imread(os.path.join(local,i))
+            #     local_img=cv2.cvtColor(local_img,cv2.COLOR_BGR2RGB)
+            #     ref_local_img.append(self.augmentation(local_img,None,self.transformer_ae,state))
+            # ref_local_img=torch.cat(ref_local_img,dim=0)
             
         except Exception as e:
             print(raw)
             traceback.print_exc()
-        return back,ref_local_img,people,pose,raw
+        return back,people_vae,people_clip,pose,raw
