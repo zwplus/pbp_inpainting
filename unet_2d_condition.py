@@ -24,7 +24,7 @@ from diffusers.utils import BaseOutput, logging
 from diffusers.models.cross_attention import AttnProcessor
 from diffusers.models.embeddings import GaussianFourierProjection, TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
-from diffusers.models.unet_2d_blocks import (
+from unet_attn import (
     CrossAttnDownBlock2D,
     CrossAttnUpBlock2D,
     DownBlock2D,
@@ -488,7 +488,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         self,
         sample: torch.FloatTensor,
         timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states:List[torch.Tensor],      #[(batch, sequence_length, feature_dim)]
+        encoder_hidden_states:torch.FloatTensor,     
         class_labels: Optional[torch.Tensor] = None,
         timestep_cond: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -496,6 +496,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
         mid_block_additional_residual: Optional[torch.Tensor] = None,
         return_dict: bool = True,
+        self_attn_states:Optional[List[List[Tuple[torch.FloatTensor]]]]=None,
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
         Args:
@@ -578,17 +579,18 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         # 3. down
         down_block_res_samples = (sample,)
-        temp_cross_attention_dim=0
+        temp_self_attention_index=0
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
                     temb=emb,
-                    encoder_hidden_states=encoder_hidden_states[temp_cross_attention_dim],
+                    encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
+                    self_attn_state=self_attn_states[temp_self_attention_index]
                 )
-                temp_cross_attention_dim+=1
+                temp_self_attention_index+=1
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
 
@@ -610,11 +612,12 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             sample = self.mid_block(
                 sample,
                 emb,
-                encoder_hidden_states=encoder_hidden_states[temp_cross_attention_dim],
+                encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
                 cross_attention_kwargs=cross_attention_kwargs,
+                self_attn_state=self_attn_states[temp_self_attention_index]
             )
-            temp_cross_attention_dim-=1
+            temp_self_attention_index-=1
         if mid_block_additional_residual is not None:
             sample = sample + mid_block_additional_residual
 
@@ -636,12 +639,13 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     hidden_states=sample,
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
-                    encoder_hidden_states=encoder_hidden_states[temp_cross_attention_dim],
+                    encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     upsample_size=upsample_size,
                     attention_mask=attention_mask,
+                    self_attn_state=self_attn_states[temp_self_attention_index]
                 )
-                temp_cross_attention_dim-=1
+                temp_self_attention_index-=1
             else:
                 sample = upsample_block(
                     hidden_states=sample, temb=emb, res_hidden_states_tuple=res_samples, upsample_size=upsample_size

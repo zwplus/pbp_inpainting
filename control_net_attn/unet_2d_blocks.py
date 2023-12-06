@@ -19,11 +19,11 @@ import torch.nn.functional as F
 from torch import nn
 
 from diffusers.utils import is_torch_version, logging
-from diffusers.models.attention import AdaGroupNorm
-from diffusers.models.attention_processor import Attention, AttnAddedKVProcessor, AttnAddedKVProcessor2_0
+from control_net_attn.attention import AdaGroupNorm
+from control_net_attn.attention_processor import Attention, AttnAddedKVProcessor, AttnAddedKVProcessor2_0
 from diffusers.models.dual_transformer_2d import DualTransformer2DModel
 from diffusers.models.resnet import Downsample2D, FirDownsample2D, FirUpsample2D, KDownsample2D, KUpsample2D, ResnetBlock2D, Upsample2D
-from diffusers.models.transformer_2d import Transformer2DModel
+from control_net_attn.transformer_2d import Transformer2DModel
 
 
 logger = logging.get_logger(__name__)  # pylint: disable=invalid-name
@@ -610,18 +610,22 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
     ) -> torch.FloatTensor:
         hidden_states = self.resnets[0](hidden_states, temb)
+
+        self_attn_states=[]
+
         for attn, resnet in zip(self.attentions, self.resnets[1:]):
-            hidden_states = attn(
+            hidden_states,self_attn_state = attn(
                 hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 cross_attention_kwargs=cross_attention_kwargs,
                 attention_mask=attention_mask,
                 encoder_attention_mask=encoder_attention_mask,
                 return_dict=False,
-            )[0]
+            )
+            self_attn_states.append(self_attn_state)
             hidden_states = resnet(hidden_states, temb)
 
-        return hidden_states
+        return hidden_states,self_attn_states
 
 
 class UNetMidBlock2DSimpleCrossAttn(nn.Module):
@@ -961,7 +965,7 @@ class CrossAttnDownBlock2D(nn.Module):
         
 
         blocks = list(zip(self.resnets, self.attentions))
-
+        self_attn_states=[]
         for i, (resnet, attn) in enumerate(blocks):
             if self.training and self.gradient_checkpointing:
 
@@ -981,7 +985,7 @@ class CrossAttnDownBlock2D(nn.Module):
                     temb,
                     **ckpt_kwargs,
                 )
-                hidden_states = torch.utils.checkpoint.checkpoint(
+                hidden_states,self_attn_state = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(attn, return_dict=False),
                     hidden_states,
                     encoder_hidden_states,
@@ -991,30 +995,30 @@ class CrossAttnDownBlock2D(nn.Module):
                     attention_mask,
                     encoder_attention_mask,
                     **ckpt_kwargs,
-                )[0]
+                )
             else:
                 hidden_states = resnet(hidden_states, temb)
-                hidden_states = attn(
+                hidden_states,self_attn_state = attn(
                     hidden_states,
                     encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
                     encoder_attention_mask=encoder_attention_mask,
                     return_dict=False,
-                )[0]
-
+                )
+            self_attn_states.append(self_attn_state)
             # apply additional residuals to the output of the last pair of resnet and attention blocks
             if i == len(blocks) - 1 and additional_residuals is not None:
                 hidden_states = hidden_states + additional_residuals
 
             output_states = output_states + (hidden_states,)
-        attn_states=hidden_states
+
         if self.downsamplers is not None:
             for downsampler in self.downsamplers:
                 hidden_states = downsampler(hidden_states)
 
             output_states = output_states + (hidden_states,)
-        return hidden_states, output_states,attn_states
+        return hidden_states, output_states,self_attn_states
 
 
 class DownBlock2D(nn.Module):

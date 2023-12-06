@@ -23,7 +23,7 @@ from diffusers.utils import BaseOutput, logging
 from diffusers.models.cross_attention import AttnProcessor
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
-from unet_2d_blocks import (
+from control_net_attn import (
     CrossAttnDownBlock2D,
     DownBlock2D,
     UNetMidBlock2DCrossAttn,
@@ -266,9 +266,6 @@ class ControlNetModel(ModelMixin, ConfigMixin):
                 upcast_attention=upcast_attention,
             )
 
-        self.controlnet_attn_blocks=nn.ModuleList(
-            [ zero_module(nn.Linear(i,1024)) for i in [320,640,1280,1280]]
-        )
 
     @classmethod
     def from_unet(
@@ -289,7 +286,7 @@ class ControlNetModel(ModelMixin, ConfigMixin):
         """
         # print(unet.config.down_block_types)
         controlnet = cls(
-            in_channels=11,
+            in_channels=9,
             flip_sin_to_cos=unet.config.flip_sin_to_cos,
             freq_shift=unet.config.freq_shift,
             down_block_types=unet.config.down_block_types,
@@ -554,14 +551,14 @@ class ControlNetModel(ModelMixin, ConfigMixin):
         down_block_attn_samples=[]
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
-                sample, res_samples,attn_states = downsample_block(
+                sample, res_samples,self_attn_states = downsample_block(
                     hidden_states=sample,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
                 )
-                down_block_attn_samples.append(attn_states)
+                down_block_attn_samples.append(self_attn_states)
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
 
@@ -569,7 +566,7 @@ class ControlNetModel(ModelMixin, ConfigMixin):
 
         # 4. mid
         if self.mid_block is not None:
-            sample = self.mid_block(
+            sample,self_attn_states = self.mid_block(
                 sample,
                 emb,
                 encoder_hidden_states=encoder_hidden_states,
@@ -578,7 +575,7 @@ class ControlNetModel(ModelMixin, ConfigMixin):
             )
             
 
-        attn_sample=down_block_attn_samples+[sample]
+        down_block_attn_samples.append(self_attn_states)
 
         #5. Control net blocks
 
@@ -596,16 +593,18 @@ class ControlNetModel(ModelMixin, ConfigMixin):
         down_block_res_samples = [sample * conditioning_scale for sample in down_block_res_samples]
         mid_block_res_sample *= conditioning_scale
         
-        attn_sample=[rearrange(i,'b c h w -> b (h w) c').contiguous() for i in attn_sample]
-        attn_samples=[]
-        for attn,attn_proj in zip(attn_sample,self.controlnet_attn_blocks):
-            attn_samples.append(attn_proj(attn))
+        # for i in down_block_attn_samples:
+        #     for j in i:
+        #         for k in j:
+        #             print(k.shape)
+
+        
 
         if not return_dict:
-            return (down_block_res_samples, mid_block_res_sample,attn_samples)
+            return (down_block_res_samples, mid_block_res_sample,down_block_attn_samples)
         
         return ControlNetOutput(
-            down_block_res_samples=down_block_res_samples, mid_block_res_sample=mid_block_res_sample,attn_sample=attn_sample
+            down_block_res_samples=down_block_res_samples, mid_block_res_sample=mid_block_res_sample,attn_sample=down_block_attn_samples
         )
 
 

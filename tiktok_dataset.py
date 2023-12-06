@@ -22,22 +22,16 @@ class diffusion_dataset(Dataset):
         
         for i in pairs_list:
             i=i.strip()
-            target_img_path,people_img_path,back_image_path,pose_img_path,local_img_dir=i.split(',')
+            target_img_path,people_img_path,back_image_path,pose_img_path,mask_img_path=i.split(',')
             people_img_path=os.path.splitext(people_img_path)[0]
             people_img_path=people_img_path.split('/')[:-3]+['groundsam_people_img']+people_img_path.split('/')[-2:]
             people_img_path='/'.join(people_img_path)+'.png'
             
-            if not ( os.path.isdir(local_img_dir) and os.path.isfile(people_img_path) and os.path.isfile(pose_img_path)
+            if not ( os.path.isfile(mask_img_path) and os.path.isfile(people_img_path) and os.path.isfile(pose_img_path)
                     and os.path.isfile(back_image_path) and os.path.isfile(target_img_path)):
                 print(people_img_path)
             else:
-                c=0
-                for i in os.listdir(local_img_dir):
-                    c+=1
-                if c<8:
-                    print(local_img_dir)
-                else:
-                    self.data_pairs.append((target_img_path,people_img_path,back_image_path,pose_img_path,local_img_dir))
+                self.data_pairs.append((target_img_path,people_img_path,back_image_path,pose_img_path,mask_img_path))
         
         self.random_square_height = transforms.Lambda(lambda img: transforms.functional.crop(img, top=int(torch.randint(0, img.height - img.width, (1,)).item()), left=0, height=img.width, width=img.width))
         self.random_square_width = transforms.Lambda(lambda img: transforms.functional.crop(img, top=0, left=int(torch.randint(0, img.width - img.height, (1,)).item()), height=img.height, width=img.height))
@@ -66,7 +60,18 @@ class diffusion_dataset(Dataset):
         ])
 
         self.transformer_clip=CLIPImageProcessor.from_pretrained('/home/user/zwplus/pbp_inpainting/sd-2.1/feature_exract')
-
+        
+        self.transformer_mask=transforms.Compose(
+            [
+            transforms.ToTensor(),
+            transforms.RandomResizedCrop(
+                (256,256),
+                scale=(min_crop_scale, 1.0), ratio=(1., 1.),
+                interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.Resize(
+                (32,32),
+                interpolation=transforms.InterpolationMode.BILINEAR),]
+        )
     def __len__(self,):
         return len(self.data_pairs)
 
@@ -85,10 +90,11 @@ class diffusion_dataset(Dataset):
 
     def __getitem__(self, index):
         try:
-            raw,people,back,pose,local=self.data_pairs[index]
+            raw,people,back,pose,mask=self.data_pairs[index]
             back=Image.open(back)
             pose=Image.open(pose)
             raw=Image.open(raw)
+            mask=Image.open(mask)
             
             people=Image.open(people)
             
@@ -106,14 +112,12 @@ class diffusion_dataset(Dataset):
             people_vae=self.augmentation(people,transform1,self.transformer_ae,state)
             people_clip=self.transformer_clip(people).pixel_values[0]
             back=self.augmentation(back,transform1,self.transformer_ae,state)
-            # ref_local_img=[]
-            # for i in os.listdir(local):
-            #     local_img=cv2.imread(os.path.join(local,i))
-            #     local_img=cv2.cvtColor(local_img,cv2.COLOR_BGR2RGB)
-            #     ref_local_img.append(self.augmentation(local_img,None,self.transformer_ae,state))
-            # ref_local_img=torch.cat(ref_local_img,dim=0)
+            
+            mask=self.augmentation(mask,transform1,self.transformer_mask,state)
+            mask[mask>=0.5]=1
+            mask[mask<0.5]=1
             
         except Exception as e:
             print(raw)
             traceback.print_exc()
-        return back,people_vae,people_clip,pose,raw
+        return back,mask,people_vae,people_clip,pose,raw
