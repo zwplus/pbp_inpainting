@@ -324,7 +324,7 @@ class Attention(nn.Module):
             hidden_states,
             encoder_hidden_states=encoder_hidden_states,
             attention_mask=attention_mask,
-            self_attn_state=None,
+            self_attn_state=self_attn_state,
             **cross_attention_kwargs,
         )
 
@@ -487,10 +487,13 @@ class AttnProcessor:
         value = attn.to_v(encoder_hidden_states)
 
         if self_attn_state is not None:
-            self_key,self_value=self_attn_state
-            
-            key=torch.cat((key,self_key))
-            value=torch.cat((value,self_value))
+            # print('using xformer')
+            _,self_key,self_value=self_attn_state
+            key=torch.cat((key,self_key),dim=1)
+            value=torch.cat((value,self_value),dim=1)
+        else:
+            # print('self_attn_state is None')
+            pass
 
         query = attn.head_to_batch_dim(query)
         key = attn.head_to_batch_dim(key)
@@ -1024,10 +1027,13 @@ class XFormersAttnProcessor:
         value = attn.to_v(encoder_hidden_states)
 
         if self_attn_state is not None:
-            print('using xformer')
-            self_key,self_value=self_attn_state
-            key=torch.cat((key,self_key))
-            value=torch.cat((value,self_value))
+            # print('using xformer')
+            _,self_key,self_value=self_attn_state
+            key=torch.cat((key,self_key),dim=1)
+            value=torch.cat((value,self_value),dim=1)
+        else:
+            # print('self_attn_state is None')
+            pass
 
         query = attn.head_to_batch_dim(query).contiguous()
         key = attn.head_to_batch_dim(key).contiguous()

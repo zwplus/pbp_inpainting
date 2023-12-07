@@ -482,7 +482,7 @@ class AttnProcessor:
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
-        self_attn_states=(key,value)
+        self_attn_states=(query,key,value)
 
         query = attn.head_to_batch_dim(query)
         key = attn.head_to_batch_dim(key)
@@ -1014,7 +1014,7 @@ class XFormersAttnProcessor:
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
-        self_attn_states=(key,value)
+        self_attn_states=(query,key,value)
 
         query = attn.head_to_batch_dim(query).contiguous()
         key = attn.head_to_batch_dim(key).contiguous()

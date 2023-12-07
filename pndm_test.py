@@ -27,13 +27,15 @@ from diffusers import PNDMScheduler,DDIMScheduler,DDPMScheduler
 from autoencoder_kl import AutoencoderKL
 from diffusers.utils.import_utils import is_xformers_available
 
-from unet_2d_condition import UNet2DConditionModel as Unet
+from sd_unet.unet_2d_condition import UNet2DConditionModel as Unet
+from appearce_net.unet_2d_condition import UNet2DConditionModel as Appearce_Unet
 from style_encoder import (
     CLIP_Image_Extractor,
     global_fusion,
     people_local_fusion,
     CLIP_Proj
 )
+from control_net import ControlNetConditioningEmbedding
 
 import wandb
 from copy import deepcopy
@@ -47,6 +49,7 @@ seed_everything(24)
 class People_Background(pl.LightningModule):
     def __init__(self,
                 unet_config:Dict=None,
+                pose_net_config:Dict=None,
                 people_config:Dict=None,
                 scheduler_path:str=None,
                 vae_path:str=None,
@@ -62,7 +65,7 @@ class People_Background(pl.LightningModule):
         self.psnr=PSNR(data_range=1.0)
         self.lpips=LPIPS(net_type='vgg',normalize=True)
 
-        self.init_model(unet_config,people_config,vae_path,enable_xformers_memory_efficient_attention)
+        self.init_model(unet_config,pose_net_config,people_config,vae_path,enable_xformers_memory_efficient_attention)
         self.train_scheduler=DDPMScheduler.from_pretrained(scheduler_path)
         self.test_scheduler=DDIMScheduler.from_pretrained(scheduler_path)
         self.test_scheduler.set_timesteps(50)
@@ -80,7 +83,7 @@ class People_Background(pl.LightningModule):
         self.save_img_num=0
         self.tr=transforms.ToPILImage()
 
-    def init_model(self,unet_config,people_config,vae_path:str=None,
+    def init_model(self,unet_config,pose_net_config,people_config,vae_path:str=None,
                 enable_xformers_memory_efficient_attention:bool=True):
         self.laten_model=AutoencoderKL.from_pretrained(vae_path)
         self.laten_model.eval()
@@ -88,40 +91,53 @@ class People_Background(pl.LightningModule):
 
 
         self.unet=Unet.from_pretrained(unet_config['ck_path'])
-        # new_in_channels=8+3
-        # with torch.no_grad():
+        self.unet.eval()
+        self.unet.requires_grad_(False)
 
-        #     conv_new = torch.nn.Conv2d(
-        #         in_channels=new_in_channels,
-        #         out_channels=self.unet.conv_in.out_channels, 
-        #         kernel_size=3,
-        #         padding=1,
-        #     )
+        self.AppearceNet=Appearce_Unet.from_pretrained(unet_config['ck_path'])
+        new_in_channels=8
+        with torch.no_grad():
 
-        #     torch.nn.init.kaiming_normal_(conv_new.weight)  
-        #     conv_new.weight.data = conv_new.weight.data * 0.  
+            conv_new = torch.nn.Conv2d(
+                in_channels=new_in_channels,
+                out_channels=self.AppearceNet.conv_in.out_channels, 
+                kernel_size=3,
+                padding=1,
+            )
 
-        #     conv_new.weight.data = torch.concat([self.unet.conv_in.weight.data[:,:8],
-        #                                         deepcopy(self.unet.conv_in.weight.data[:, 8][:,None,:,:]).repeat((1,3,1,1))
-        #                                         ],dim=1)
+            torch.nn.init.kaiming_normal_(conv_new.weight)  
+            conv_new.weight.data = conv_new.weight.data * 0.  
 
-        #     conv_new.bias.data = self.unet.conv_in.bias.data  
+            conv_new.weight.data = self.AppearceNet.conv_in.weight.data[:,:new_in_channels]
 
-        #     self.unet.conv_in = conv_new  
-        #     self.unet.config['in_channels'] = new_in_channels 
+            conv_new.bias.data = self.AppearceNet.conv_in.bias.data  
+
+            self.AppearceNet.conv_in = conv_new  
+            self.AppearceNet.config['in_channels'] = new_in_channels 
 
         self.clip=CLIP_Image_Extractor(**people_config['clip_image_extractor'])
         self.clip.eval()
         self.clip.requires_grad_(False)
         self.people_proj=CLIP_Proj(**people_config['clip_proj'])
         
-        self.controlnet_pose = ControlNetModel.from_unet(unet=self.unet)
+        # self.controlnet_pose = ControlNetModel.from_unet(unet=self.unet)
+        self.controlnet_cond_embedding = ControlNetConditioningEmbedding(**pose_net_config)
+
+
+        temp=[[320,320],[640,640],[1280,1280],[1280],[1280,1280,1280],[640,640,640],[320,320,320]]
+        self.cross_attn_linear_proj=nn.ModuleList()
+        for block in temp:
+            self.cross_attn_linear_proj.append(
+                nn.ModuleList([nn.Linear(input_ch,1024) for input_ch in block])
+            )
+            
+
 
         if enable_xformers_memory_efficient_attention:
             if is_xformers_available():
                 print('start xformer')
                 self.unet.enable_xformers_memory_efficient_attention()
-                self.controlnet_pose.enable_xformers_memory_efficient_attention()
+                self.AppearceNet.enable_xformers_memory_efficient_attention()
             else:
                 print("xformers is not available, therefore not enabled")
 
@@ -143,10 +159,12 @@ class People_Background(pl.LightningModule):
                 ,torch.zeros_like(people_clip).to(torch.float16).to(self.device))
             background=self.img_to_laten(torch.zeros_like(background_img).to(torch.float16).to(self.device))[0]
             mask_img=torch.zeros_like(mask_img).to(torch.float16).to(self.device)
+
+            pose_laten=self.get_control_cond(torch.zeros_like(pose_img).to(torch.float16).to(self.device))
         else:
             people_feature,people_laten=self.get_people_condition(people_vae,people_clip)
             background=self.img_to_laten(background_img)[0]
-
+            pose_laten=self.get_control_cond(pose_img)
         
         target=self.img_to_laten(img)[0]
         
@@ -158,8 +176,8 @@ class People_Background(pl.LightningModule):
         
 
         laten=torch.cat([noisy_image,background,mask_img],dim=1)
-        control_laten=torch.cat([noisy_image,people_laten],dim=1)
-        model_out = self(laten,control_laten, timesteps,people_feature,pose_img)
+        appearce_laten=torch.cat([noisy_image,people_laten],dim=1)
+        model_out = self(laten,appearce_laten, timesteps,people_feature,pose_laten)
 
         loss=F.mse_loss(model_out,noise)
 
@@ -172,19 +190,17 @@ class People_Background(pl.LightningModule):
 
         return loss
 
-    def forward(self,laten:torch.FloatTensor=None,control_laten:torch.FloatTensor=None,timesteps:torch.Tensor=None,
-                people_feature:torch.FloatTensor=None,pose_img:torch.FloatTensor=None): 
+    def forward(self,laten:torch.FloatTensor=None,appearce_latens:torch.FloatTensor=None,timesteps:torch.Tensor=None,
+                people_feature:torch.FloatTensor=None,pose_laten:torch.FloatTensor=None): 
                 
-                down_block_res_samples, mid_block_res_sample,attn_sample=self.controlnet_pose(
-                        sample=control_laten,timestep=timesteps,
+                appearce_output=self.AppearceNet(
+                        sample=appearce_latens,timestep=timesteps,
                         encoder_hidden_states=people_feature, # both controlnet path use the refer latents
-                        controlnet_cond=pose_img, conditioning_scale=1.0, return_dict=False)
-                
+                        pose_laten=pose_laten)
+                cross_attn_outputs=self.get_cross_attn(appearce_output.cross_attn_outputs)
                 return self.unet(sample=laten,timestep=timesteps,
-                        encoder_hidden_states=people_feature,
-                        down_block_additional_residuals=down_block_res_samples,
-                        mid_block_additional_residual=mid_block_res_sample,
-                        self_attn_states=attn_sample).sample
+                        encoder_hidden_states=cross_attn_outputs,
+                        self_attn_states=appearce_output.self_attn_states).sample
     
     @torch.no_grad()
     def sample(self,people_vae:torch.FloatTensor,people_clip:torch.FloatTensor,
@@ -197,9 +213,14 @@ class People_Background(pl.LightningModule):
                                                         torch.zeros_like(people_vae).to(torch.float16).to(self.device),
                                                         torch.zeros_like(people_clip).to(torch.float16).to(self.device)
                                                         )
+            uncond_pose_laten=self.get_control_cond(torch.zeros_like(pose_img).to(torch.float16).to(self.device))
+
             cond_people_feature,cond_people_laten=self.get_people_condition(people_vae,people_clip)
+            cond_pose_laten=self.get_control_cond(pose_img)
+
             people_feature=torch.cat([cond_people_feature,uncond_people_feature])
             people_laten=torch.cat([cond_people_laten,uncond_people_laten])
+            pose_laten=torch.cat([cond_pose_laten,uncond_pose_laten])
 
             uncond_back=self.img_to_laten(torch.zeros_like(background_img).to(torch.float16).to(self.device))[0]
             cond_back=self.img_to_laten(background_img)[0]
@@ -207,15 +228,13 @@ class People_Background(pl.LightningModule):
             
             mask_img=torch.cat([mask_img,torch.zeros_like(mask_img).to(torch.float16).to(self.device)])
 
-            pose_img=torch.cat([pose_img,torch.zeros_like(pose_img  ).to(torch.float16).to(self.device)])
-
             for t in self.test_scheduler.timesteps:
                 latens=torch.cat([latens_]*2)
-                control_latens=torch.cat([latens,people_laten],dim=1)
+                appearce_latens=torch.cat([latens,people_laten],dim=1)
                 latens=torch.cat([latens,back,mask_img],dim=1)
                 
                 timestep=torch.full((latens.shape[0],),t).to(self.device)
-                noise_pred=self(latens,control_latens,timestep,people_feature,pose_img)
+                noise_pred=self(latens,appearce_latens,timestep,people_feature,pose_laten)
                 noise_cond,noise_uncond=noise_pred.chunk(2)
                 noise_pred=noise_uncond+self.condition_guidance*(noise_cond-noise_uncond)
                 latens_=self.test_scheduler.step(noise_pred,t,latens_).prev_sample
@@ -271,19 +290,31 @@ class People_Background(pl.LightningModule):
                 logger.log_image(f'val/image',images=[show_img],step=self.global_step)
 
     def get_people_condition(self,people_vae,people_clip):
-        people_laten=self.img_to_laten(people_vae)[0]
-
-        people_global_feature=self.clip(people_clip).detach()
+        with torch.no_grad():
+            people_laten=self.img_to_laten(people_vae)[0]
+            people_global_feature=self.clip(people_clip).detach()
         people_global_feature=self.people_proj(people_global_feature)
 
         return people_global_feature,people_laten
 
+    def get_control_cond(self,pose_img):
+        pose_laten=self.controlnet_cond_embedding(pose_img)
+        return pose_laten
+    
+    def get_cross_attn(self,cross_attn_outputs:List):
+        appearce_states=[]
+        for attn_outputs,projs in zip(cross_attn_outputs,self.cross_attn_linear_proj):
+            temp=[]
+            for attn_output,proj in zip(attn_outputs,projs):
+                temp.append(proj(attn_output))
+            appearce_states.append(temp)
+        return appearce_states
     
     def configure_optimizers(self):
 
         params =[i  for i in (list(self.people_proj.parameters())
-                +list(self.unet.parameters())
-                +list(self.controlnet_pose.parameters()))
+                +list(self.AppearceNet.parameters())+list(self.controlnet_cond_embedding.parameters())
+                +list(self.cross_attn_linear_proj.parameters()))
                     if i.requires_grad==True ]
         optim = torch.optim.AdamW(params, lr=self.lr)
         lambda_lr=lambda step: max(((self.global_step)/self.warm_up),5e-3) if (self.global_step)< self.warm_up else  1.0
@@ -317,15 +348,19 @@ if __name__=='__main__':
     train_dataset=diffusion_dataset(train_list)
     test_dataset=diffusion_dataset(test_list,if_train=False)
 
-    batch_size=64
+    batch_size=72
     logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting/',project='pose_inpainting_ref')
 
-    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=40)
-    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=40,drop_last=True)
+    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=48)
+    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=48,drop_last=True)
 
     
     unet_config={
         'ck_path':'/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/unet-inpainting',
+    }
+    pose_net_config={
+        'conditioning_embedding_channels': 320,
+        'conditioning_channels':3,
     }
     people_config={
         'clip_image_extractor':
@@ -354,13 +389,13 @@ if __name__=='__main__':
 
 
     vae_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/vae'
-    model=People_Background(unet_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
+    model=People_Background(unet_config,pose_net_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
                             vae_path=vae_path,out_path='/data/zwplus/pbp_inpainting/pose_inpainting_ref/output',batch_size=batch_size)
     
     logger.watch(model)
 
     checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/data/zwplus/pbp_inpainting/pose_inpainting_ref/checkpoint", 
-                                                    save_top_k=5, monitor="fid",mode='min',
+                                                    save_top_k=6, monitor="fid",mode='min',
                                                     filename="pndm-{epoch:03d}-{fid:.3f}-{ssim:.3f}",)
     
     trainer=pl.Trainer(

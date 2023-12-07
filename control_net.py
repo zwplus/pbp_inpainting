@@ -23,7 +23,7 @@ from diffusers.utils import BaseOutput, logging
 from diffusers.models.cross_attention import AttnProcessor
 from diffusers.models.embeddings import TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
-from control_net_attn import (
+from appearce_net import (
     CrossAttnDownBlock2D,
     DownBlock2D,
     UNetMidBlock2DCrossAttn,

@@ -11,7 +11,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional,Tuple
 
 import torch
 import torch.nn.functional as F
@@ -19,7 +19,7 @@ from torch import nn
 
 from diffusers.utils import maybe_allow_in_graph
 from diffusers.models.activations import get_activation
-from control_net_attn.attention_processor import Attention
+from sd_unet.attention_processor import Attention
 from diffusers.models.embeddings import CombinedTimestepLabelEmbeddings
 from diffusers.models.lora import LoRACompatibleLinear
 
@@ -138,7 +138,8 @@ class BasicTransformerBlock(nn.Module):
         timestep: Optional[torch.LongTensor] = None,
         cross_attention_kwargs: Dict[str, Any] = None,
         class_labels: Optional[torch.LongTensor] = None,
-    ):
+        self_attn_state:Optional[Tuple[torch.FloatTensor]]=None,
+    ):  
         # Notice that normalization is always applied before the real computation in the following blocks.
         # 1. Self-Attention
         if self.use_ada_layer_norm:
@@ -151,11 +152,11 @@ class BasicTransformerBlock(nn.Module):
             norm_hidden_states = self.norm1(hidden_states)
 
         cross_attention_kwargs = cross_attention_kwargs if cross_attention_kwargs is not None else {}
-
-        attn_output,self_attn_state = self.attn1(
+        attn_output = self.attn1(
             norm_hidden_states,
             encoder_hidden_states=encoder_hidden_states if self.only_cross_attention else None,
             attention_mask=attention_mask,
+            self_attn_state=self_attn_state,
             **cross_attention_kwargs,
         )
         if self.use_ada_layer_norm_zero:
@@ -168,7 +169,7 @@ class BasicTransformerBlock(nn.Module):
                 self.norm2(hidden_states, timestep) if self.use_ada_layer_norm else self.norm2(hidden_states)
             )
 
-            attn_output,_ = self.attn2(
+            attn_output = self.attn2(
                 norm_hidden_states,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=encoder_attention_mask,
@@ -202,7 +203,7 @@ class BasicTransformerBlock(nn.Module):
 
         hidden_states = ff_output + hidden_states
 
-        return hidden_states,self_attn_state
+        return hidden_states
 
 
 class FeedForward(nn.Module):

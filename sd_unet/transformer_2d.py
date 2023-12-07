@@ -21,7 +21,7 @@ from torch import nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.embeddings import ImagePositionalEmbeddings
 from diffusers.utils import BaseOutput, deprecate
-from unet_attn.attention import BasicTransformerBlock
+from sd_unet.attention import BasicTransformerBlock
 from diffusers.models.embeddings import PatchEmbed
 from diffusers.models.lora import LoRACompatibleConv
 from diffusers.models.modeling_utils import ModelMixin

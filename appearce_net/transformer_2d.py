@@ -21,7 +21,7 @@ from torch import nn
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.models.embeddings import ImagePositionalEmbeddings
 from diffusers.utils import BaseOutput, deprecate
-from control_net_attn.attention import BasicTransformerBlock
+from appearce_net.attention import BasicTransformerBlock
 from diffusers.models.embeddings import PatchEmbed
 from diffusers.models.lora import LoRACompatibleConv
 from diffusers.models.modeling_utils import ModelMixin
@@ -40,6 +40,7 @@ class Transformer2DModelOutput(BaseOutput):
 
     sample: torch.FloatTensor
     self_attn_state:tuple
+    cross_attn_output:list
 
 
 class Transformer2DModel(ModelMixin, ConfigMixin):
@@ -289,9 +290,8 @@ class Transformer2DModel(ModelMixin, ConfigMixin):
             hidden_states = self.pos_embed(hidden_states)
 
         # 2. Blocks
-        for block in self.transformer_blocks:
-            # temp=0
-            hidden_states,self_attn_state = block(
+        for block in self.transformer_blocks:    #因为一个transformerblock只有一个，所以不用list了
+            hidden_states,self_attn_state,cross_attn_output = block(
                 hidden_states,
                 attention_mask=attention_mask,
                 encoder_hidden_states=encoder_hidden_states,
@@ -300,9 +300,7 @@ class Transformer2DModel(ModelMixin, ConfigMixin):
                 cross_attention_kwargs=cross_attention_kwargs,
                 class_labels=class_labels,
             )
-            # temp+=1
-            # print(f'/home/user/zwplus/pbp_inpainting/control_net_attn/transformer_2d.py:{temp} transformer_2d 循环几次')
-        # 3. Output
+            
         if self.is_input_continuous:
             if not self.use_linear_projection:
                 hidden_states = hidden_states.reshape(batch, height, width, inner_dim).permute(0, 3, 1, 2).contiguous()
@@ -340,6 +338,6 @@ class Transformer2DModel(ModelMixin, ConfigMixin):
             )
 
         if not return_dict:
-            return (output,self_attn_state)
+            return (output,self_attn_state,cross_attn_output)
 
-        return Transformer2DModelOutput(sample=output,self_attn_state=self_attn_state)
+        return Transformer2DModelOutput(sample=output,self_attn_state=self_attn_state,cross_attn_output=cross_attn_output)

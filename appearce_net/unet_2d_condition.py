@@ -21,10 +21,10 @@ import torch.utils.checkpoint
 from diffusers.configuration_utils import ConfigMixin, register_to_config
 from diffusers.loaders import UNet2DConditionLoadersMixin
 from diffusers.utils import BaseOutput, logging
-from diffusers.models.cross_attention import AttnProcessor
+from appearce_net.attention_processor import AttnProcessor
 from diffusers.models.embeddings import GaussianFourierProjection, TimestepEmbedding, Timesteps
 from diffusers.models.modeling_utils import ModelMixin
-from unet_attn import (
+from appearce_net import (
     CrossAttnDownBlock2D,
     CrossAttnUpBlock2D,
     DownBlock2D,
@@ -48,6 +48,8 @@ class UNet2DConditionOutput(BaseOutput):
     """
 
     sample: torch.FloatTensor
+    self_attn_states:List
+    cross_attn_outputs:List
 
 
 class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin):
@@ -258,7 +260,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 resnet_eps=norm_eps,
                 resnet_act_fn=act_fn,
                 resnet_groups=norm_num_groups,
-                cross_attention_dim=cross_attention_dim,  ######注意i会高于实际cross_attention的数目
+                cross_attention_dim=cross_attention_dim,  
                 num_attention_heads=attention_head_dim[i],
                 downsample_padding=downsample_padding,
                 dual_cross_attention=dual_cross_attention,
@@ -285,6 +287,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 use_linear_projection=use_linear_projection,
                 upcast_attention=upcast_attention,
             )
+
         elif mid_block_type == "UNetMidBlock2DSimpleCrossAttn":
             self.mid_block = UNetMidBlock2DSimpleCrossAttn(
                 in_channels=block_out_channels[-1],
@@ -496,7 +499,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
         mid_block_additional_residual: Optional[torch.Tensor] = None,
         return_dict: bool = True,
-        self_attn_states:Optional[List[List[Tuple[torch.FloatTensor]]]]=None,
+        pose_laten:torch.FloatTensor=None
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
         Args:
@@ -576,23 +579,30 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         # 2. pre-process
         sample = self.conv_in(sample)
+        sample+=pose_laten
+
+        self_attn_states=[]
+        cross_attn_outputs=[]
 
         # 3. down
         down_block_res_samples = (sample,)
-        temp_self_attention_index=0
+        # temp_self_attention_index=0
         for downsample_block in self.down_blocks:
             if hasattr(downsample_block, "has_cross_attention") and downsample_block.has_cross_attention:
-                sample, res_samples = downsample_block(
+                sample, res_samples,self_attn_state,cross_attn_output = downsample_block(
                     hidden_states=sample,
                     temb=emb,
                     encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
-                    self_attn_state=self_attn_states[temp_self_attention_index]
                 )
-                temp_self_attention_index+=1
+                # temp_self_attention_index+=1
+                self_attn_states.append(self_attn_state)
+                cross_attn_outputs.append(cross_attn_output)
             else:
                 sample, res_samples = downsample_block(hidden_states=sample, temb=emb)
+            
+            
 
             down_block_res_samples += res_samples
 
@@ -606,18 +616,18 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 new_down_block_res_samples += (down_block_res_sample,)
 
             down_block_res_samples = new_down_block_res_samples
-        # temp_cross_attention_dim=-1
+        
         # 4. mid
         if self.mid_block is not None:
-            sample = self.mid_block(
+            sample,self_attn_state,cross_attn_output = self.mid_block(
                 sample,
                 emb,
                 encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
                 cross_attention_kwargs=cross_attention_kwargs,
-                self_attn_state=self_attn_states[temp_self_attention_index]
             )
-            temp_self_attention_index-=1
+            self_attn_states.append(self_attn_state)
+            cross_attn_outputs.append(cross_attn_output)
         if mid_block_additional_residual is not None:
             sample = sample + mid_block_additional_residual
 
@@ -635,7 +645,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 upsample_size = down_block_res_samples[-1].shape[2:]
 
             if hasattr(upsample_block, "has_cross_attention") and upsample_block.has_cross_attention:
-                sample = upsample_block(
+                sample,self_attn_state,cross_attn_output = upsample_block(
                     hidden_states=sample,
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
@@ -643,13 +653,14 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     cross_attention_kwargs=cross_attention_kwargs,
                     upsample_size=upsample_size,
                     attention_mask=attention_mask,
-                    self_attn_state=self_attn_states[temp_self_attention_index]
                 )
-                temp_self_attention_index-=1
+                self_attn_states.append(self_attn_state)
+                cross_attn_outputs.append(cross_attn_output)
             else:
                 sample = upsample_block(
                     hidden_states=sample, temb=emb, res_hidden_states_tuple=res_samples, upsample_size=upsample_size
                 )
+            
 
         # 6. post-process
         if self.conv_norm_out:
@@ -658,6 +669,6 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         sample = self.conv_out(sample)
 
         if not return_dict:
-            return (sample,)
-
-        return UNet2DConditionOutput(sample=sample)
+            return (sample,self_attn_states,cross_attn_outputs)
+        
+        return UNet2DConditionOutput(sample=sample,self_attn_states=self_attn_states,cross_attn_outputs=cross_attn_outputs)
