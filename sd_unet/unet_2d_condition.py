@@ -497,6 +497,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         mid_block_additional_residual: Optional[torch.Tensor] = None,
         return_dict: bool = True,
         self_attn_states:Optional[List[List[Tuple[torch.FloatTensor]]]]=None,
+        pose_laten:torch.FloatTensor=None
         # cross_attn_states:Optional[List[List[torch.FloatTensor]]]=None,
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
@@ -577,6 +578,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         # 2. pre-process
         sample = self.conv_in(sample)
+        sample+=pose_laten
 
         # 3. down
         down_block_res_samples = (sample,)

@@ -788,7 +788,7 @@ class AttnDownBlock2D(nn.Module):
                 ResnetBlock2D(
                     in_channels=in_channels,
                     out_channels=out_channels,
-                    temb_channels=temb_channels,
+                    temb_channels=temb_channels,   #确保None
                     eps=resnet_eps,
                     groups=resnet_groups,
                     dropout=dropout,

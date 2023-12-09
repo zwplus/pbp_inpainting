@@ -118,7 +118,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         in_channels: int = 4,
         out_channels: int = 4,
         center_input_sample: bool = False,
-        flip_sin_to_cos: bool = True,
+        flip_sin_to_cos: bool = False,
         freq_shift: int = 0,
         down_block_types: Tuple[str] = (
             "CrossAttnDownBlock2D",
@@ -145,7 +145,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         num_class_embeds: Optional[int] = None,
         upcast_attention: bool = False,
         resnet_time_scale_shift: str = "default",
-        time_embedding_type: str = "positional",
+        time_embedding_type: str=None,
         timestep_post_act: Optional[str] = None,
         time_cond_proj_dim: Optional[int] = None,
         conv_in_kernel: int = 3,
@@ -197,18 +197,25 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
             self.time_proj = Timesteps(block_out_channels[0], flip_sin_to_cos, freq_shift)
             timestep_input_dim = block_out_channels[0]
+        elif time_embedding_type is None:
+            time_embed_dim = None
+            self.time_proj = None
+            timestep_input_dim = None
         else:
             raise ValueError(
                 f"{time_embedding_type} does not exist. Pleaes make sure to use one of `fourier` or `positional`."
             )
 
-        self.time_embedding = TimestepEmbedding(
-            timestep_input_dim,
-            time_embed_dim,
-            act_fn=act_fn,
-            post_act_fn=timestep_post_act,
-            cond_proj_dim=time_cond_proj_dim,
-        )
+        if time_embedding_type is None:
+            self.time_embedding=None
+        else:
+            self.time_embedding = TimestepEmbedding(
+                timestep_input_dim,
+                time_embed_dim,
+                act_fn=act_fn,
+                post_act_fn=timestep_post_act,
+                cond_proj_dim=time_cond_proj_dim,
+            )
 
         # class embedding
         if class_embed_type is None and num_class_embeds is not None:
@@ -490,7 +497,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
     def forward(
         self,
         sample: torch.FloatTensor,
-        timestep: Union[torch.Tensor, float, int],
+        timestep: Optional[Union[torch.Tensor, float, int]],
         encoder_hidden_states:torch.FloatTensor,     
         class_labels: Optional[torch.Tensor] = None,
         timestep_cond: Optional[torch.Tensor] = None,
@@ -499,7 +506,6 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
         mid_block_additional_residual: Optional[torch.Tensor] = None,
         return_dict: bool = True,
-        pose_laten:torch.FloatTensor=None
     ) -> Union[UNet2DConditionOutput, Tuple]:
         r"""
         Args:
@@ -541,31 +547,33 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         if self.config.center_input_sample:
             sample = 2 * sample - 1.0
 
-        # 1. time
-        timesteps = timestep
-        if not torch.is_tensor(timesteps):
-            # TODO: this requires sync between CPU and GPU. So try to pass timesteps as tensors if you can
-            # This would be a good case for the `match` statement (Python 3.10+)
-            is_mps = sample.device.type == "mps"
-            if isinstance(timestep, float):
-                dtype = torch.float32 if is_mps else torch.float64
-            else:
-                dtype = torch.int32 if is_mps else torch.int64
-            timesteps = torch.tensor([timesteps], dtype=dtype, device=sample.device)
-        elif len(timesteps.shape) == 0:
-            timesteps = timesteps[None].to(sample.device)
+        # # 1. time
+        # timesteps = timestep
+        # if not torch.is_tensor(timesteps):
+        #     # TODO: this requires sync between CPU and GPU. So try to pass timesteps as tensors if you can
+        #     # This would be a good case for the `match` statement (Python 3.10+)
+        #     is_mps = sample.device.type == "mps"
+        #     if isinstance(timestep, float):
+        #         dtype = torch.float32 if is_mps else torch.float64
+        #     else:
+        #         dtype = torch.int32 if is_mps else torch.int64
+        #     timesteps = torch.tensor([timesteps], dtype=dtype, device=sample.device)
+        # elif len(timesteps.shape) == 0:
+        #     timesteps = timesteps[None].to(sample.device)
+        
 
-        # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
-        timesteps = timesteps.expand(sample.shape[0])
+        # # broadcast to batch dimension in a way that's compatible with ONNX/Core ML
+        # timesteps = timesteps.expand(sample.shape[0])
 
-        t_emb = self.time_proj(timesteps)
+        # t_emb = self.time_proj(timesteps)
 
-        # timesteps does not contain any weights and will always return f32 tensors
-        # but time_embedding might actually be running in fp16. so we need to cast here.
-        # there might be better ways to encapsulate this.
-        t_emb = t_emb.to(dtype=self.dtype)
+        # # timesteps does not contain any weights and will always return f32 tensors
+        # # but time_embedding might actually be running in fp16. so we need to cast here.
+        # # there might be better ways to encapsulate this.
+        # t_emb = t_emb.to(dtype=self.dtype)
 
-        emb = self.time_embedding(t_emb, timestep_cond)
+        # emb = self.time_embedding(t_emb, timestep_cond)
+        emb=None
 
         if self.class_embedding is not None:
             if class_labels is None:
@@ -579,7 +587,6 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         # 2. pre-process
         sample = self.conv_in(sample)
-        sample+=pose_laten
 
         self_attn_states=[]
         cross_attn_outputs=[]
