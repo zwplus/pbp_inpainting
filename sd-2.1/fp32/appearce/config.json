@@ -40,5 +40,6 @@
     "CrossAttnUpBlock2D",
     "CrossAttnUpBlock2D"
   ],
-  "use_linear_projection": true
+  "use_linear_projection": true,
+  "time_embedding_type":"positional"
 }

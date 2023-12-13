@@ -214,7 +214,7 @@ class Transformer2DModel(ModelMixin, ConfigMixin):
         attention_mask: Optional[torch.Tensor] = None,
         encoder_attention_mask: Optional[torch.Tensor] = None,
         return_dict: bool = True,
-        self_attn_state:Optional[Tuple[torch.FloatTensor]]=None,
+        self_attn_state:Optional[torch.FloatTensor]=None,
     ):
         """
         The [`Transformer2DModel`] forward method.

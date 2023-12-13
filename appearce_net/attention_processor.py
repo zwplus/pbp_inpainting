@@ -472,6 +472,8 @@ class AttnProcessor:
         if attn.group_norm is not None:
             hidden_states = attn.group_norm(hidden_states.transpose(1, 2).contiguous()).transpose(1, 2).contiguous()
 
+        self_attn_states=hidden_states
+
         query = attn.to_q(hidden_states)
 
         if encoder_hidden_states is None:
@@ -481,8 +483,6 @@ class AttnProcessor:
 
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
-
-        self_attn_states=(query,key,value)
 
         query = attn.head_to_batch_dim(query)
         key = attn.head_to_batch_dim(key)
@@ -1004,6 +1004,7 @@ class XFormersAttnProcessor:
         if attn.group_norm is not None:
             hidden_states = attn.group_norm(hidden_states.transpose(1, 2)).transpose(1, 2).contiguous()
 
+        self_attn_states=hidden_states
         query = attn.to_q(hidden_states)
 
         if encoder_hidden_states is None:
@@ -1014,7 +1015,7 @@ class XFormersAttnProcessor:
         key = attn.to_k(encoder_hidden_states)
         value = attn.to_v(encoder_hidden_states)
 
-        self_attn_states=(query,key,value)
+        
 
         query = attn.head_to_batch_dim(query).contiguous()
         key = attn.head_to_batch_dim(key).contiguous()

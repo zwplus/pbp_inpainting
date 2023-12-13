@@ -496,7 +496,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         down_block_additional_residuals: Optional[Tuple[torch.Tensor]] = None,
         mid_block_additional_residual: Optional[torch.Tensor] = None,
         return_dict: bool = True,
-        self_attn_states:Optional[List[List[Tuple[torch.FloatTensor]]]]=None,
+        self_attn_states:Optional[List[List[torch.FloatTensor]]]=None,
         pose_laten:torch.FloatTensor=None
         # cross_attn_states:Optional[List[List[torch.FloatTensor]]]=None,
     ) -> Union[UNet2DConditionOutput, Tuple]:

@@ -609,7 +609,7 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         attention_mask: Optional[torch.FloatTensor] = None,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        self_attn_state:Optional[List[Tuple[torch.FloatTensor]]] = None,
+        self_attn_state:Optional[List[torch.FloatTensor]] = None,
     ) -> torch.FloatTensor:
         hidden_states = self.resnets[0](hidden_states, temb)
         for i,(attn,resnet) in enumerate(zip(self.attentions, self.resnets[1:])):
@@ -959,7 +959,7 @@ class CrossAttnDownBlock2D(nn.Module):
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
         additional_residuals=None,
-        self_attn_state:Optional[List[Tuple[torch.FloatTensor]]] = None,
+        self_attn_state:Optional[List[torch.FloatTensor]] = None,
     ):
         output_states = ()
 
@@ -2098,7 +2098,7 @@ class CrossAttnUpBlock2D(nn.Module):
         upsample_size: Optional[int] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
-        self_attn_state:Optional[List[Tuple[torch.FloatTensor]]] = None,
+        self_attn_state:Optional[List[torch.FloatTensor]] = None,
     ):
         for i,(resnet, attn) in enumerate(zip(self.resnets, self.attentions)):
             # pop res hidden states

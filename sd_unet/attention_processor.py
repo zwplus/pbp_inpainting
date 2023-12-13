@@ -483,17 +483,17 @@ class AttnProcessor:
         elif attn.norm_cross:
             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
-
         if self_attn_state is not None:
             # print('using xformer')
-            _,self_key,self_value=self_attn_state
-            key=torch.cat((key,self_key),dim=1)
-            value=torch.cat((value,self_value),dim=1)
+            encoder_hidden_states=torch.cat((encoder_hidden_states,self_attn_state),dim=1)
         else:
             # print('self_attn_state is None')
             pass
+
+        key = attn.to_k(encoder_hidden_states)
+        value = attn.to_v(encoder_hidden_states)
+
+        
 
         query = attn.head_to_batch_dim(query)
         key = attn.head_to_batch_dim(key)
@@ -984,7 +984,7 @@ class XFormersAttnProcessor:
         hidden_states: torch.FloatTensor,
         encoder_hidden_states: Optional[torch.FloatTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
-        self_attn_state:Optional[Tuple[torch.FloatTensor]]=None,
+        self_attn_state:Optional[torch.FloatTensor]=None,
         temb: Optional[torch.FloatTensor] = None,
     ):
         residual = hidden_states
@@ -1023,17 +1023,16 @@ class XFormersAttnProcessor:
         elif attn.norm_cross:
             encoder_hidden_states = attn.norm_encoder_hidden_states(encoder_hidden_states)
 
-        key = attn.to_k(encoder_hidden_states)
-        value = attn.to_v(encoder_hidden_states)
-
         if self_attn_state is not None:
             # print('using xformer')
-            _,self_key,self_value=self_attn_state
-            key=torch.cat((key,self_key),dim=1)
-            value=torch.cat((value,self_value),dim=1)
+            encoder_hidden_states=torch.cat((encoder_hidden_states,self_attn_state),dim=1)
         else:
             # print('self_attn_state is None')
             pass
+
+        key = attn.to_k(encoder_hidden_states)
+        value = attn.to_v(encoder_hidden_states)
+
 
         query = attn.head_to_batch_dim(query).contiguous()
         key = attn.head_to_batch_dim(key).contiguous()
