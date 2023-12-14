@@ -488,7 +488,8 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
         self,
         sample: torch.FloatTensor,
         timestep: Union[torch.Tensor, float, int],
-        encoder_hidden_states:Optional[List[List[torch.FloatTensor]]]=None,     
+        encoder_hidden_states: torch.FloatTensor,
+        # encoder_hidden_states:Optional[List[List[torch.FloatTensor]]]=None,     
         class_labels: Optional[torch.Tensor] = None,
         timestep_cond: Optional[torch.Tensor] = None,
         attention_mask: Optional[torch.Tensor] = None,
@@ -588,7 +589,8 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                 sample, res_samples = downsample_block(
                     hidden_states=sample,
                     temb=emb,
-                    encoder_hidden_states=encoder_hidden_states[temp_self_attention_index],
+                    # encoder_hidden_states=encoder_hidden_states[temp_self_attention_index],
+                    encoder_hidden_states=encoder_hidden_states
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
                     self_attn_state=self_attn_states[temp_self_attention_index]
@@ -615,7 +617,8 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
             sample = self.mid_block(
                 sample,
                 emb,
-                encoder_hidden_states=encoder_hidden_states[temp_self_attention_index],
+                # encoder_hidden_states=encoder_hidden_states[temp_self_attention_index],
+                encoder_hidden_states=encoder_hidden_states,
                 attention_mask=attention_mask,
                 cross_attention_kwargs=cross_attention_kwargs,
                 self_attn_state=self_attn_states[temp_self_attention_index]
@@ -642,7 +645,8 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     hidden_states=sample,
                     temb=emb,
                     res_hidden_states_tuple=res_samples,
-                    encoder_hidden_states=encoder_hidden_states[temp_self_attention_index],
+                    # encoder_hidden_states=encoder_hidden_states[temp_self_attention_index],
+                    encoder_hidden_states=encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     upsample_size=upsample_size,
                     attention_mask=attention_mask,
