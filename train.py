@@ -89,7 +89,8 @@ class People_Background(pl.LightningModule):
         self.laten_model.requires_grad_(False)
 
         self.unet=Unet.from_pretrained(unet_config['ck_path'])
-        self.AppearceNet=Appearce_Unet.from_pretrained(unet_config['ck_path'],ignore_mismatched_sizes=True)
+        self.AppearceNet=Appearce_Unet.from_pretrained('/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/appearce',
+                                                    ignore_mismatched_sizes=True)
 
         new_in_channels=4
         with torch.no_grad():
@@ -154,15 +155,12 @@ class People_Background(pl.LightningModule):
         back_clip=self.get_image_clip(back_clip)
         people_clip=self.get_people_clip(people_clip)
         people_laten=self.img_to_laten(people_vae)[0]
-        appearce_output=self.AppearceNet(sample=people_laten,timestep=None,encoder_hidden_states=back_clip)
-        # cross_attn_states=self.get_cross_attn(appearce_output.cross_attn_states)
-        self_attn_states=appearce_output.self_attn_states
+        
 
         if rate <= self.condition_rate:
             people_clip=torch.zeros_like(people_clip,dtype=torch.float16).to(self.device)
             pose_laten=torch.zeros_like(pose_laten,dtype=torch.float16).to(self.device)
-            # cross_attn_states=[[ torch.zeros_like(j_,dtype=torch.float16).to(self.device) for j_ in i_] for i_ in cross_attn_states]
-            self_attn_states=[[ torch.zeros_like(j_,dtype=torch.float16).to(self.device) for j_ in i_] for i_ in self_attn_states]
+            background=torch.zeros_like(background,dtype=torch.float16).to(self.device)
 
 
         target=self.img_to_laten(img)[0] 
@@ -170,9 +168,13 @@ class People_Background(pl.LightningModule):
         timesteps=torch.randint(0,self.train_scheduler.config.num_train_timesteps,(target.shape[0],)).long().to(self.device)
         noisy_image=self.train_scheduler.add_noise(target,noise,timesteps).to(torch.float16)
         
+        people_laten=torch.cat([noisy_image,people_laten],dim=1)
+        appearce_output=self.AppearceNet(sample=people_laten,timestep=timesteps,encoder_hidden_states=back_clip)
+        self_attn_states=appearce_output.self_attn_states
+        if rate <= self.condition_rate:
+            self_attn_states=[[ torch.zeros_like(j_,dtype=torch.float16).to(self.device) for j_ in i_] for i_ in self_attn_states]
 
         laten=torch.cat([noisy_image,background,mask_img],dim=1)
-
         model_out = self(laten,timesteps,self_attn_states,people_clip,pose_laten)
 
         loss=F.mse_loss(model_out,noise)
@@ -208,23 +210,27 @@ class People_Background(pl.LightningModule):
             
             back_clip=self.get_image_clip(back_clip)
             cond_people_laten=self.img_to_laten(people_vae)[0]
-            appearce_output=self.AppearceNet(sample=cond_people_laten,timestep=None,encoder_hidden_states=back_clip)
-            
-
-            self_attn_states=[
-                [torch.cat([j_,torch.zeros_like(j_,dtype=torch.float16).to(self.device)]) for j_ in i_] for i_ in appearce_output.self_attn_states
-            ]
 
 
             cond_back=self.img_to_laten(background_img)[0]
-            back=torch.cat([cond_back,cond_back])
+            back=torch.cat([cond_back,torch.zeros_like(cond_back,dtype=torch.float16).to(self.device)])
             mask_img=torch.cat([mask_img,mask_img])
 
+            
             for t in self.test_scheduler.timesteps:
                 latens=torch.cat([latens_]*2)
-                latens=torch.cat([latens,back,mask_img],dim=1)
                 timestep=torch.full((latens.shape[0],),t).to(self.device)
 
+                app_latens=torch.cat([latens_,cond_people_laten],dim=1)
+                appearce_output=self.AppearceNet(sample=app_latens,
+                                                timestep=timestep[:app_latens.shape[0]],
+                                                encoder_hidden_states=back_clip)
+                self_attn_states=[
+                    [torch.cat([j_,torch.zeros_like(j_,dtype=torch.float16).to(self.device)]) for j_ in i_] for i_ in appearce_output.self_attn_states
+                ]
+                
+                latens=torch.cat([latens,back,mask_img],dim=1)
+                
                 noise_pred=self(latens,timestep,self_attn_states,people_clip,pose_laten)
                 noise_cond,noise_uncond=noise_pred.chunk(2)
                 noise_pred=noise_uncond+self.condition_guidance*(noise_cond-noise_uncond)
