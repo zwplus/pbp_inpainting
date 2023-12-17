@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import sys
-from typing import Any, Dict, Optional, Tuple,List
+from typing import Any, Dict, Optional, Tuple,List,Union
 
 import numpy as np
 import torch
@@ -605,7 +605,7 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         self,
         hidden_states: torch.FloatTensor,
         temb: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[List[torch.FloatTensor]] = None,
+        encoder_hidden_states: Union[List[torch.FloatTensor],torch.FloatTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
@@ -615,7 +615,7 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         for i,(attn,resnet) in enumerate(zip(self.attentions, self.resnets[1:])):
             hidden_states = attn(
                 hidden_states,
-                encoder_hidden_states=encoder_hidden_states[i],
+                encoder_hidden_states=encoder_hidden_states[i] if isinstance(encoder_hidden_states,list) else encoder_hidden_states,
                 cross_attention_kwargs=cross_attention_kwargs,
                 attention_mask=attention_mask,
                 encoder_attention_mask=encoder_attention_mask,
@@ -954,7 +954,7 @@ class CrossAttnDownBlock2D(nn.Module):
         self,
         hidden_states: torch.FloatTensor,
         temb: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[List[torch.FloatTensor]] = None,
+        encoder_hidden_states: Union[List[torch.FloatTensor],torch.FloatTensor] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         encoder_attention_mask: Optional[torch.FloatTensor] = None,
@@ -999,7 +999,7 @@ class CrossAttnDownBlock2D(nn.Module):
                 hidden_states = resnet(hidden_states, temb)
                 hidden_states = attn(
                     hidden_states,
-                    encoder_hidden_states=encoder_hidden_states[i],
+                    encoder_hidden_states=encoder_hidden_states[i] if isinstance(encoder_hidden_states,list) else encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
                     encoder_attention_mask=encoder_attention_mask,
@@ -2093,7 +2093,7 @@ class CrossAttnUpBlock2D(nn.Module):
         hidden_states: torch.FloatTensor,
         res_hidden_states_tuple: Tuple[torch.FloatTensor, ...],
         temb: Optional[torch.FloatTensor] = None,
-        encoder_hidden_states: Optional[List[torch.FloatTensor]] = None,
+        encoder_hidden_states: Union[List[torch.FloatTensor],torch.FloatTensor] = None,
         cross_attention_kwargs: Optional[Dict[str, Any]] = None,
         upsample_size: Optional[int] = None,
         attention_mask: Optional[torch.FloatTensor] = None,
@@ -2140,7 +2140,7 @@ class CrossAttnUpBlock2D(nn.Module):
                 hidden_states = resnet(hidden_states, temb)
                 hidden_states = attn(
                     hidden_states,
-                    encoder_hidden_states=encoder_hidden_states[i],
+                    encoder_hidden_states=encoder_hidden_states[i] if isinstance(encoder_hidden_states,list) else encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
                     encoder_attention_mask=encoder_attention_mask,

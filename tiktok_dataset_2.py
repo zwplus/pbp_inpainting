@@ -43,7 +43,7 @@ class diffusion_dataset(Dataset):
             [
             transforms.ToTensor(),
             transforms.RandomResizedCrop(
-                (512,512),
+                (256,256),
                 scale=(min_crop_scale, 1.0), ratio=(1., 1.),
                 interpolation=transforms.InterpolationMode.BILINEAR),
             torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
@@ -53,7 +53,7 @@ class diffusion_dataset(Dataset):
         self.cond_transform = transforms.Compose([
             transforms.ToTensor(),
             transforms.RandomResizedCrop(
-                (512,512),
+                (256,256),
                 scale=(min_crop_scale, 1.0), ratio=(1., 1.),
                 interpolation=transforms.InterpolationMode.BILINEAR),
             torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
@@ -65,11 +65,11 @@ class diffusion_dataset(Dataset):
             [
             transforms.ToTensor(),
             transforms.RandomResizedCrop(
-                (512,512),
+                (256,256),
                 scale=(min_crop_scale, 1.0), ratio=(1., 1.),
                 interpolation=transforms.InterpolationMode.BILINEAR),
             transforms.Resize(
-                (64,64),
+                (32,32),
                 interpolation=transforms.InterpolationMode.BILINEAR),]
         )
     def __len__(self,):
@@ -110,9 +110,10 @@ class diffusion_dataset(Dataset):
             raw=self.augmentation(raw, transform1, self.transformer_ae, state)
             pose=self.augmentation(pose, transform1, self.cond_transform, state)
             people_vae=self.augmentation(people,transform1,self.transformer_ae,state)
+            people_clip=self.augmentation(people,transform1,self.transformer_clip,state).pixel_values[0]
             
             back_vae=self.augmentation(back,transform1,self.transformer_ae,state)
-            back_clip=self.transformer_clip(back).pixel_values[0]
+            back_clip=self.augmentation(back,transform1,self.transformer_clip,state).pixel_values[0]
             
             mask=self.augmentation(mask,transform1,self.transformer_mask,state)
             mask[mask>=0.5]=1
@@ -121,4 +122,4 @@ class diffusion_dataset(Dataset):
         except Exception as e:
             print(raw)
             traceback.print_exc()
-        return back_vae,mask,people_vae,back_clip,pose,raw
+        return back_vae,mask,people_vae,people_clip,back_clip,pose,raw

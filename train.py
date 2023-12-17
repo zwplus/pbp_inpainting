@@ -105,7 +105,7 @@ class People_Background(pl.LightningModule):
             torch.nn.init.kaiming_normal_(conv_new.weight)  
             conv_new.weight.data = conv_new.weight.data * 0.  
 
-            conv_new.weight.data = self.AppearceNet.conv_in.weight.data[:,new_in_channels:new_in_channels+4]
+            conv_new.weight.data = self.AppearceNet.conv_in.weight.data[:,:new_in_channels+4]
 
             conv_new.bias.data = self.AppearceNet.conv_in.bias.data  
 
@@ -220,6 +220,7 @@ class People_Background(pl.LightningModule):
             for t in self.test_scheduler.timesteps:
                 latens=torch.cat([latens_]*2)
                 timestep=torch.full((latens.shape[0],),t).to(self.device)
+
 
                 app_latens=torch.cat([latens_,cond_people_laten],dim=1)
                 appearce_output=self.AppearceNet(sample=app_latens,

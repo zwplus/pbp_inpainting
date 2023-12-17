@@ -590,7 +590,7 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
                     hidden_states=sample,
                     temb=emb,
                     # encoder_hidden_states=encoder_hidden_states[temp_self_attention_index],
-                    encoder_hidden_states=encoder_hidden_states
+                    encoder_hidden_states=encoder_hidden_states,
                     attention_mask=attention_mask,
                     cross_attention_kwargs=cross_attention_kwargs,
                     self_attn_state=self_attn_states[temp_self_attention_index]
