@@ -409,11 +409,11 @@ if __name__=='__main__':
     vae_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/vae'
     model=People_Background(unet_config,pose_net_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
                             vae_path=vae_path,out_path='/data/zwplus/pbp_inpainting/pose_inpainting_ref/output',condition_guidance=7.5,batch_size=batch_size,
-                            warm_up=200,learning_rate=1e-4)
-    state_dict=torch.load('/data/zwplus/pbp_inpainting/pose_inpainting_ref/checkpoint/pndm-epoch=094-fid=34.875-ssim=0.666.ckpt/94_mask.ckpt')
-    state_dict['unet.conv_in.weight']=state_dict['unet.conv_in.weight'][:,:8,:,:]
+                            warm_up=5000,learning_rate=1e-4)
+    # state_dict=torch.load('/data/zwplus/pbp_inpainting/pose_inpainting_ref/checkpoint/pndm-epoch=094-fid=34.875-ssim=0.666.ckpt/94_mask.ckpt')
+    # state_dict['unet.conv_in.weight']=state_dict['unet.conv_in.weight'][:,:8,:,:]
 
-    logger.watch(model)
+    # logger.watch(model)
 
     checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/data/zwplus/pbp_inpainting/pose_inpainting_ref/checkpoint", 
                                                     save_top_k=5, monitor="fid",mode='min',
