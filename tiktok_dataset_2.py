@@ -61,17 +61,17 @@ class diffusion_dataset(Dataset):
 
         self.transformer_clip=CLIPImageProcessor.from_pretrained('/home/user/zwplus/pbp_inpainting/sd-2.1/feature_exract')
         
-        self.transformer_mask=transforms.Compose(
-            [
-            transforms.ToTensor(),
-            transforms.RandomResizedCrop(
-                (256,256),
-                scale=(min_crop_scale, 1.0), ratio=(1., 1.),
-                interpolation=transforms.InterpolationMode.BILINEAR),
-            transforms.Resize(
-                (32,32),
-                interpolation=transforms.InterpolationMode.BILINEAR),]
-        )
+        # self.transformer_mask=transforms.Compose(
+        #     [
+        #     transforms.ToTensor(),
+        #     transforms.RandomResizedCrop(
+        #         (256,256),
+        #         scale=(min_crop_scale, 1.0), ratio=(1., 1.),
+        #         interpolation=transforms.InterpolationMode.BILINEAR),
+        #     transforms.Resize(
+        #         (32,32),
+        #         interpolation=transforms.InterpolationMode.BILINEAR),]
+        # )
     def __len__(self,):
         return len(self.data_pairs)
 
@@ -94,7 +94,7 @@ class diffusion_dataset(Dataset):
             back=Image.open(back)
             pose=Image.open(pose)
             raw=Image.open(raw)
-            mask=Image.open(mask)
+            # mask=Image.open(mask)
             
             people=Image.open(people)
             
@@ -115,11 +115,11 @@ class diffusion_dataset(Dataset):
             back_vae=self.augmentation(back,transform1,self.transformer_ae,state)
             back_clip=self.augmentation(back,transform1,self.transformer_clip,state).pixel_values[0]
             
-            mask=self.augmentation(mask,transform1,self.transformer_mask,state)
-            mask[mask>=0.5]=1
-            mask[mask<0.5]=1
+            # mask=self.augmentation(mask,transform1,self.transformer_mask,state)
+            # mask[mask>=0.5]=1
+            # mask[mask<0.5]=1
             
         except Exception as e:
             print(raw)
             traceback.print_exc()
-        return back_vae,mask,people_vae,people_clip,back_clip,pose,raw
+        return back_vae,people_vae,people_clip,back_clip,pose,raw
