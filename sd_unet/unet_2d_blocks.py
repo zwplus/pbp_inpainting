@@ -615,7 +615,7 @@ class UNetMidBlock2DCrossAttn(nn.Module):
         for i,(attn,resnet) in enumerate(zip(self.attentions, self.resnets[1:])):
             hidden_states = attn(
                 hidden_states,
-                encoder_hidden_states=encoder_hidden_states[i] if isinstance(encoder_hidden_states,list) else encoder_hidden_states,
+                encoder_hidden_states=encoder_hidden_states if isinstance(encoder_hidden_states,list) else encoder_hidden_states,
                 cross_attention_kwargs=cross_attention_kwargs,
                 attention_mask=attention_mask,
                 encoder_attention_mask=encoder_attention_mask,
@@ -987,7 +987,7 @@ class CrossAttnDownBlock2D(nn.Module):
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(attn, return_dict=False),
                     hidden_states,
-                    encoder_hidden_states[i],
+                    encoder_hidden_states,
                     None,  # timestep
                     None,  # class_labels
                     cross_attention_kwargs,
@@ -999,7 +999,7 @@ class CrossAttnDownBlock2D(nn.Module):
                 hidden_states = resnet(hidden_states, temb)
                 hidden_states = attn(
                     hidden_states,
-                    encoder_hidden_states=encoder_hidden_states[i] if isinstance(encoder_hidden_states,list) else encoder_hidden_states,
+                    encoder_hidden_states=encoder_hidden_states if isinstance(encoder_hidden_states,list) else encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
                     encoder_attention_mask=encoder_attention_mask,
@@ -2127,7 +2127,7 @@ class CrossAttnUpBlock2D(nn.Module):
                 hidden_states = torch.utils.checkpoint.checkpoint(
                     create_custom_forward(attn, return_dict=False),
                     hidden_states,
-                    encoder_hidden_states[i],
+                    encoder_hidden_states,
                     None,  # timestep
                     None,  # class_labels
                     cross_attention_kwargs,
@@ -2140,7 +2140,7 @@ class CrossAttnUpBlock2D(nn.Module):
                 hidden_states = resnet(hidden_states, temb)
                 hidden_states = attn(
                     hidden_states,
-                    encoder_hidden_states=encoder_hidden_states[i] if isinstance(encoder_hidden_states,list) else encoder_hidden_states,
+                    encoder_hidden_states=encoder_hidden_states if isinstance(encoder_hidden_states,list) else encoder_hidden_states,
                     cross_attention_kwargs=cross_attention_kwargs,
                     attention_mask=attention_mask,
                     encoder_attention_mask=encoder_attention_mask,

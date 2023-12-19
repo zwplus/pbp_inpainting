@@ -428,7 +428,7 @@ if __name__=='__main__':
         log_every_n_steps=200,max_epochs=600,
         profiler='simple',benchmark=True,gradient_clip_val=1) 
     
-    trainer.fit(model,train_loader,val_loader) 
+    trainer.fit(model,train_loader,val_loader,ckpt_path='/data/zwplus/pbp_inpainting/pose_inpainting_ref/checkpoint/pndm-epoch=019-fid=43.844-ssim=0.649.ckpt') 
     wandb.finish()
 
     # DeepSpeedStrategy(logging_level=logging.INFO,allgather_bucket_size=5e8,reduce_bucket_size=5e8)
