@@ -50,7 +50,7 @@ class People_Background(pl.LightningModule):
                 scheduler_path:str=None,
                 vae_path:str=None,
                 out_path='',
-                image_size=(4,32,32),
+                image_size=(4,64,64),
                 condition_rate=0.1,
                 condition_guidance=5,
                 warm_up=5000,
@@ -353,10 +353,10 @@ class People_Background(pl.LightningModule):
 
 
 train_list=[
-    '/data/zwplus/tiktok/train/tiktok_mask.txt',
+    '/data/zwplus/tiktok/train/train_new_pose.txt',
 ]
 test_list=[
-    '/data/zwplus/tiktok/test/tiktok_mask.txt',
+    '/data/zwplus/tiktok/test/test_new_pose.txt',
 ]
 
 
@@ -366,11 +366,11 @@ if __name__=='__main__':
     train_dataset=diffusion_dataset(train_list)
     test_dataset=diffusion_dataset(test_list,if_train=False)
 
-    batch_size=64
+    batch_size=20
     logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting/',project='pose_inpainting_ref')
 
-    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=40)
-    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=40,drop_last=True)
+    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=32)
+    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=32,drop_last=True)
 
     
     unet_config={
@@ -410,6 +410,7 @@ if __name__=='__main__':
     model=People_Background(unet_config,pose_net_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
                             vae_path=vae_path,out_path='/data/zwplus/pbp_inpainting/pose_inpainting_ref/output',condition_guidance=7.5,batch_size=batch_size,
                             warm_up=5000,learning_rate=1e-4)
+    model.load_state_dict(torch.load('/data/zwplus/pbp_inpainting/pose_inpainting_ref/checkpoint/pndm-epoch=099-fid=35.156-ssim=0.669.ckpt/99.bin'),strict=False)
     # state_dict=torch.load('/data/zwplus/pbp_inpainting/pose_inpainting_ref/checkpoint/pndm-epoch=094-fid=34.875-ssim=0.666.ckpt/94_mask.ckpt')
     # state_dict['unet.conv_in.weight']=state_dict['unet.conv_in.weight'][:,:8,:,:]
 
@@ -424,11 +425,11 @@ if __name__=='__main__':
         default_root_dir='/data/zwplus/pbp_inpainting/pose_inpainting_ref/checkpoint',
         strategy=DeepSpeedStrategy(logging_level=logging.INFO,allgather_bucket_size=5e8,reduce_bucket_size=5e8),
         precision='16-mixed',  #bf16-mixed
-        accumulate_grad_batches=4,check_val_every_n_epoch=5,
+        accumulate_grad_batches=16,check_val_every_n_epoch=5,
         log_every_n_steps=200,max_epochs=600,
         profiler='simple',benchmark=True,gradient_clip_val=1) 
     
-    trainer.fit(model,train_loader,val_loader,ckpt_path='/data/zwplus/pbp_inpainting/pose_inpainting_ref/checkpoint/pndm-epoch=019-fid=43.844-ssim=0.649.ckpt') 
+    trainer.fit(model,train_loader,val_loader) 
     wandb.finish()
 
     # DeepSpeedStrategy(logging_level=logging.INFO,allgather_bucket_size=5e8,reduce_bucket_size=5e8)
