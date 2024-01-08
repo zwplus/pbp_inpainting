@@ -27,6 +27,7 @@ from autoencoder_kl import AutoencoderKL
 from diffusers.utils.import_utils import is_xformers_available
 
 from sd_unet.unet_2d_condition import UNet2DConditionModel as Unet
+from sd_unet.control_net import ControlNetModel as ControlNetModel
 from appearce_net.unet_2d_condition import UNet2DConditionModel as Appearce_Unet
 from style_encoder import (
     CLIP_Image_Extractor,
@@ -50,7 +51,7 @@ class People_Background(pl.LightningModule):
                 scheduler_path:str=None,
                 vae_path:str=None,
                 out_path='',
-                image_size=(4,32,32),
+                image_size=(4,64,64),
                 condition_rate=0.1,
                 condition_guidance=5,
                 warm_up=5000,
@@ -88,11 +89,13 @@ class People_Background(pl.LightningModule):
         self.laten_model.eval()
         self.laten_model.requires_grad_(False)
 
-        self.unet=Unet.from_pretrained(unet_config['ck_path'])
+        # self.unet=Unet.from_pretrained(unet_config['ck_path'])
+        self.unet=Unet.from_config('/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/unet-inpainting/config.json')
+        self.unet.load_state_dict(torch.load(''))  #加载unet权重
         self.AppearceNet=Appearce_Unet.from_pretrained('/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/appearce',
                                                     ignore_mismatched_sizes=True)
 
-        
+        self.controlnet_pose = ControlNetModel.from_unet(unet=self.unet)
         with torch.no_grad():
             new_in_channels=8
             conv_new = torch.nn.Conv2d(
@@ -128,14 +131,16 @@ class People_Background(pl.LightningModule):
             # self.unet.conv_in = conv_new_2  
             # self.unet.config['in_channels'] = new_in_channels
         
-        need_train=0
-        for name,param in self.unet.named_parameters():
-            if 'transformer_blocks'  in name:
-                param.requires_grad_(True)
-                need_train+=1
-            elif 'transformer_blocks' not in name:
-                param.requires_grad_(False)
-        print(need_train)
+        # need_train=0
+        # for name,param in self.unet.named_parameters():
+        #     if 'transformer_blocks'  in name:
+        #         param.requires_grad_(True)
+        #         need_train+=1
+        #     elif 'transformer_blocks' not in name:
+        #         param.requires_grad_(False)
+        # print(need_train)
+        self.unet.requires_grad_(False)
+        self.AppearceNet.requires_grad_(False)
             
 
         self.clip=CLIP_Image_Extractor(**people_config['clip_image_extractor'])
@@ -143,6 +148,7 @@ class People_Background(pl.LightningModule):
         self.clip.requires_grad_(False)
 
         self.people_proj=CLIP_Proj(**people_config['clip_proj'])
+        self.people_proj.requires_grad_(False)
         # self.controlnet_cond_embedding = ControlNetConditioningEmbedding(**pose_net_config)
 
         if enable_xformers_memory_efficient_attention:
@@ -157,8 +163,7 @@ class People_Background(pl.LightningModule):
         self.save_img_num=0
         rate=random.random()
 
-        # background_img,people_vae,people_clip,img,src_mask,target_pose_cond=batch
-        background_img,people_vae,people_clip,img,src_mask=batch
+        background_img,people_vae,people_clip,img,src_mask,target_pose_cond=batch
 
         img=img.to(torch.float16).to(self.device)
         people_vae=people_vae.to(torch.float16).to(self.device)
@@ -166,8 +171,7 @@ class People_Background(pl.LightningModule):
         background_img=background_img.to(torch.float16).to(self.device)
         src_mask=src_mask.to(torch.float16).to(self.device)
 
-        # target_pose_cond=target_pose_cond.to(torch.float16).to(self.device)
-        # pose_laten=self.get_control_cond(target_pose_cond)
+        target_pose_cond=target_pose_cond.to(torch.float16).to(self.device)
 
         background=self.img_to_laten(background_img)[0]
         people_clip=self.get_people_clip(people_clip)
@@ -188,8 +192,7 @@ class People_Background(pl.LightningModule):
             # background=torch.zeros_like(background,dtype=torch.float16).to(self.device)
 
         laten=torch.cat([noisy_image,background,src_mask],dim=1)
-        pose_laten=None
-        model_out = self(laten,timesteps,self_attn_states,people_clip,pose_laten)
+        model_out = self(laten,timesteps,self_attn_states,people_clip,target_pose_cond)
 
         loss=F.mse_loss(model_out,noise)
         self.log('train/loss',loss, prog_bar=True,
@@ -202,23 +205,25 @@ class People_Background(pl.LightningModule):
         return loss
 
     def forward(self,laten:torch.FloatTensor=None,timesteps:torch.Tensor=None,self_attn_states:torch.FloatTensor=None
-                ,cross_attn_states:torch.FloatTensor=None,pose_laten:torch.FloatTensor=None): 
+                ,cross_attn_states:torch.FloatTensor=None,pose_img:torch.FloatTensor=None): 
+                down_block_res_samples, mid_block_res_sample=self.controlnet_pose(
+                        sample=laten,timestep=timesteps,
+                        encoder_hidden_states=cross_attn_states, # both controlnet path use the refer latents
+                        controlnet_cond=pose_img, conditioning_scale=1.0, 
+                        return_dict=False,self_attn_states=self_attn_states)
                 return self.unet(sample=laten,timestep=timesteps,
                         encoder_hidden_states=cross_attn_states,
-                        self_attn_states=self_attn_states,pose_laten=pose_laten).sample
+                        down_block_additional_residuals=down_block_res_samples,
+                        mid_block_additional_residual=mid_block_res_sample,
+                        self_attn_states=self_attn_states,pose_laten=None).sample
     
     @torch.no_grad()
     def sample(self,people_vae:torch.FloatTensor,people_clip:torch.FloatTensor,
                 background_img:Optional[torch.FloatTensor]=None,src_mask:torch.FloatTensor=None,target_pose_cond:torch.FloatTensor=None):
 
             latens_=torch.randn([people_vae.shape[0],*self.laten_shape],dtype=torch.float16).to(self.device)
-            
-            if target_pose_cond is not None:
-                cond_pose_laten=self.get_control_cond(target_pose_cond)
-                uncond_pose_laten=torch.zeros_like(cond_pose_laten).to(torch.float16).to(self.device)
-                pose_laten=torch.cat([cond_pose_laten,uncond_pose_laten])
-            else:
-                pose_laten=None
+        
+            pose_laten=torch.cat([target_pose_cond]*2)
 
             cond_people_clip=self.get_people_clip(people_clip)
             uncond_people_clip=torch.zeros_like(cond_people_clip).to(torch.float16).to(self.device)
@@ -254,8 +259,8 @@ class People_Background(pl.LightningModule):
     @torch.no_grad()
     def validation_step(self,batch,batch_idx):
 
-        # background_img,people_vae,people_clip,img,src_mask,target_pose_cond=batch
-        background_img,people_vae,people_clip,img,src_mask=batch
+        background_img,people_vae,people_clip,img,src_mask,target_pose_cond=batch
+
 
         img=img.to(torch.float16).to(self.device)
         people_vae=people_vae.to(torch.float16).to(self.device)
@@ -263,14 +268,13 @@ class People_Background(pl.LightningModule):
         background_img=background_img.to(torch.float16).to(self.device)
         src_mask=src_mask.to(torch.float16).to(self.device)
 
-        # target_pose_cond=target_pose_cond.to(torch.float16).to(self.device)
-        target_pose_cond=None
+        target_pose_cond=target_pose_cond.to(torch.float16).to(self.device)
         
         target_img=self.sample(people_vae,people_clip,background_img,src_mask,target_pose_cond)
         target_img=self.laten_to_img(target_img)
         target_img=torch.clamp(target_img.detach()/2+0.5,0,1).detach()
         img=(img.detach()/2+0.5).to(torch.float16)
-        # target_pose_cond=target_pose_cond.detach().cpu()/2+0.5
+        target_pose_cond=target_pose_cond.detach().cpu()/2+0.5
             
 
         self.fid.update(target_img,real=False)
@@ -288,7 +292,7 @@ class People_Background(pl.LightningModule):
 
 
         img=img.detach().cpu()
-        # pose_img=pose_img.detach().cpu()
+        pose_img=pose_img.detach().cpu()
         target_img=target_img.detach().cpu()
 
         file_dir=os.path.join(self.out_path,str(self.global_step))
@@ -298,8 +302,8 @@ class People_Background(pl.LightningModule):
             save_img.save(os.path.join(file_dir,str(self.local_rank)+'_'+str(self.save_img_num)+'.jpg'))
             self.save_img_num+=1
             if self.save_img_num==1:  
-                # h=torch.cat([img[:4],pose_img[:4],target_img[:4]])
-                h=torch.cat([img[:4],target_img[:4]])
+                h=torch.cat([img[:4],pose_img[:4],target_img[:4]])
+                # h=torch.cat([img[:4],target_img[:4]])
                 show_img=make_grid(h,nrow=4,padding=1)
                 show_img=self.tr(show_img)
 
@@ -312,14 +316,14 @@ class People_Background(pl.LightningModule):
 
         return img_clip_feature
 
-    def get_control_cond(self,pose_img):
-        pose_laten=self.controlnet_cond_embedding(pose_img)
-        return pose_laten
+    # def get_control_cond(self,pose_img):
+    #     pose_laten=self.controlnet_cond_embedding(pose_img)
+    #     return pose_laten
     
     def configure_optimizers(self):
 
         params =[i  for i in (list(self.people_proj.parameters())+list(self.unet.parameters())
-                +list(self.AppearceNet.parameters()))   #list(self.controlnet_cond_embedding.parameters()
+                +list(self.AppearceNet.parameters()+list(self.controlnet_pose.parameters())))   #list(self.controlnet_cond_embedding.parameters()
                 if i.requires_grad==True ]
         optim = torch.optim.AdamW(params, lr=self.lr)
         lambda_lr=lambda step: max(((self.global_step)/self.warm_up),5e-3) if (self.global_step)< self.warm_up else  1.0
@@ -353,11 +357,11 @@ if __name__=='__main__':
     train_dataset=diffusion_dataset(train_list)
     test_dataset=diffusion_dataset(test_list,if_train=False)
 
-    batch_size=72
+    batch_size=32
     logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting_mask_pre/',project='pose_inpainting_mask')
 
-    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=48)
-    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=48,drop_last=True)
+    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=32)
+    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=32,drop_last=True)
 
     
     unet_config={
