@@ -22,21 +22,19 @@ class diffusion_dataset(Dataset):
         
         for i in pairs_list:
             i=i.strip()
-            target_img_path,people_img_path,back_image_path,pose_img,src_mask_img,target_mask_img=i.split(',')
-            # people_img_path=os.path.splitext(people_img_path)[0]
-            # people_img_path=people_img_path.split('/')[:-3]+['groundsam_people_img']+people_img_path.split('/')[-2:]
-            # people_img_path='/'.join(people_img_path)+'.png'
+            target_img_path,people_img_path,back_image_path,pose_img,src_mask_img=i.split(',')
+            
             
             if not ( os.path.isfile(people_img_path) and os.path.isfile(pose_img)
-                    and os.path.isfile(back_image_path) and os.path.isfile(target_img_path) and os.path.isfile(target_mask_img) ):
+                    and os.path.isfile(back_image_path) and os.path.isfile(target_img_path) and os.path.isfile(src_mask_img) ):
                 print(people_img_path)
             else:
-                self.data_pairs.append((target_img_path,people_img_path,back_image_path,pose_img,src_mask_img,target_mask_img))
+                self.data_pairs.append((target_img_path,people_img_path,back_image_path,pose_img,src_mask_img))
         
         self.random_square_height = transforms.Lambda(lambda img: transforms.functional.crop(img, top=int(torch.randint(0, img.height - img.width, (1,)).item()), left=0, height=img.width, width=img.width))
         self.random_square_width = transforms.Lambda(lambda img: transforms.functional.crop(img, top=0, left=int(torch.randint(0, img.width - img.height, (1,)).item()), height=img.height, width=img.height))
 
-        min_crop_scale = 0.9 if if_train else 1.0
+        min_crop_scale = 0.8 if if_train else 1.0
         
         print(len(pairs_list))
         self.transformer_ae=transforms.Compose(
@@ -90,13 +88,12 @@ class diffusion_dataset(Dataset):
 
     def __getitem__(self, index):
         try:
-            raw,people,back,pose,src_mask,target_mask=self.data_pairs[index]
+            raw,people,back,pose,src_mask=self.data_pairs[index]
             back=Image.open(back)
-            pose=Image.open(pose)
+            # pose=Image.open(pose)
             raw=Image.open(raw)
             people=Image.open(people)
             src_mask=Image.open(src_mask)
-            target_mask=Image.open(target_mask)
             
             if raw.size[0]>raw.size[1]:  # w>h
                 transform1=self.random_square_width
@@ -108,22 +105,16 @@ class diffusion_dataset(Dataset):
             state = torch.get_rng_state()
 
             raw=self.augmentation(raw, transform1, self.transformer_ae, state)
-            target_pose_cond=self.augmentation(pose, transform1, self.cond_transform, state)
+            # target_pose_cond=self.augmentation(pose, transform1, self.cond_transform, state)
             people_vae=self.augmentation(people,transform1,self.transformer_ae,state)
             people_clip=self.augmentation(people,transform1,self.transformer_clip,state).pixel_values[0]
-            
             back_vae=self.augmentation(back,transform1,self.transformer_ae,state)
-            # back_clip=self.augmentation(back,transform1,self.transformer_clip,state).pixel_values[0]
-            
+
             src_mask=self.augmentation(src_mask,transform1,self.transformer_mask,state)
-            target_mask=self.augmentation(target_mask,transform1,self.transformer_mask,state)
             src_mask[src_mask>=0.5]=1
             src_mask[src_mask<0.5]=0
-            target_mask[target_mask>=0.5]=1
-            target_mask[target_mask<0.5]=0
-            
             
         except Exception as e:
-            print(raw)
+            print(pose)
             traceback.print_exc()
-        return back_vae,people_vae,people_clip,raw,src_mask,target_mask,target_pose_cond
+        return back_vae,people_vae,people_clip,raw,src_mask

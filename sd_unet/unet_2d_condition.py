@@ -579,7 +579,8 @@ class UNet2DConditionModel(ModelMixin, ConfigMixin, UNet2DConditionLoadersMixin)
 
         # 2. pre-process
         sample = self.conv_in(sample)
-        sample+=pose_laten
+        if pose_laten is not None:
+            sample+=pose_laten
 
         # 3. down
         down_block_res_samples = (sample,)
