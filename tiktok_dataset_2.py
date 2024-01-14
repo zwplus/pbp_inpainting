@@ -48,14 +48,6 @@ class diffusion_dataset(Dataset):
             ]
         )
 
-        self.cond_transform = transforms.Compose([
-            transforms.ToTensor(),
-            transforms.RandomResizedCrop(
-                (512,512),
-                scale=(min_crop_scale, 1.0), ratio=(1., 1.),
-                interpolation=transforms.InterpolationMode.BILINEAR),
-            torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
-        ])
 
         self.transformer_clip=CLIPImageProcessor.from_pretrained('/home/user/zwplus/pbp_inpainting/sd-2.1/feature_exract')
         
@@ -105,7 +97,7 @@ class diffusion_dataset(Dataset):
             state = torch.get_rng_state()
 
             raw=self.augmentation(raw, transform1, self.transformer_ae, state)
-            target_pose_cond=self.augmentation(pose, transform1, self.cond_transform, state)
+            target_pose_cond=self.augmentation(pose, transform1, self.transformer_ae, state)
             people_vae=self.augmentation(people,transform1,self.transformer_ae,state)
             people_clip=self.augmentation(people,transform1,self.transformer_clip,state).pixel_values[0]
             back_vae=self.augmentation(back,transform1,self.transformer_ae,state)

@@ -33,7 +33,7 @@ from style_encoder import (
     CLIP_Image_Extractor,
     CLIP_Proj
 )
-from control_net import ControlNetConditioningEmbedding
+
 
 import wandb
 
@@ -89,9 +89,10 @@ class People_Background(pl.LightningModule):
         self.laten_model.eval()
         self.laten_model.requires_grad_(False)
 
-        # self.unet=Unet.from_pretrained(unet_config['ck_path'])
-        self.unet=Unet.from_config('/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/unet-inpainting/config.json')
-        self.unet.load_state_dict(torch.load(''))  #加载unet权重
+        self.unet=Unet.from_pretrained(unet_config['ck_path'])
+        # self.unet=Unet.from_config('/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/unet-inpainting/config.json')
+        # self.unet.load_state_dict(torch.load('/data/zwplus/pbp_inpainting/pose_inpainting_mask/checkpoint/pndm-epoch=015-fid=6.223-ssim=0.949.ckpt/unet.bin'))  #加载unet权重
+        
         self.AppearceNet=Appearce_Unet.from_pretrained('/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/appearce',
                                                     ignore_mismatched_sizes=True)
 
@@ -156,6 +157,7 @@ class People_Background(pl.LightningModule):
                 print('start xformer')
                 self.unet.enable_xformers_memory_efficient_attention()
                 self.AppearceNet.enable_xformers_memory_efficient_attention()
+                self.controlnet_pose.enable_xformers_memory_efficient_attention()
             else:
                 print("xformers is not available, therefore not enabled")
 
@@ -170,7 +172,6 @@ class People_Background(pl.LightningModule):
         people_clip=people_clip.to(torch.float16).to(self.device)
         background_img=background_img.to(torch.float16).to(self.device)
         src_mask=src_mask.to(torch.float16).to(self.device)
-
         target_pose_cond=target_pose_cond.to(torch.float16).to(self.device)
 
         background=self.img_to_laten(background_img)[0]
@@ -188,8 +189,6 @@ class People_Background(pl.LightningModule):
         if rate <= self.condition_rate:
             self_attn_states=[[ torch.zeros_like(j_,dtype=torch.float16).to(self.device) for j_ in i_] for i_ in self_attn_states]
             people_clip=torch.zeros_like(people_clip,dtype=torch.float16).to(self.device)
-            # pose_laten=torch.zeros_like(pose_laten,dtype=torch.float16).to(self.device)
-            # background=torch.zeros_like(background,dtype=torch.float16).to(self.device)
 
         laten=torch.cat([noisy_image,background,src_mask],dim=1)
         model_out = self(laten,timesteps,self_attn_states,people_clip,target_pose_cond)
@@ -211,6 +210,8 @@ class People_Background(pl.LightningModule):
                         encoder_hidden_states=cross_attn_states, # both controlnet path use the refer latents
                         controlnet_cond=pose_img, conditioning_scale=1.0, 
                         return_dict=False,self_attn_states=self_attn_states)
+                # print(f'down_block_res:{[torch.isnan(i).any() for i in down_block_res_samples]}')
+                # print(f'mid_block_res:{torch.isnan(mid_block_res_sample).any()}')
                 return self.unet(sample=laten,timestep=timesteps,
                         encoder_hidden_states=cross_attn_states,
                         down_block_additional_residuals=down_block_res_samples,
@@ -237,6 +238,7 @@ class People_Background(pl.LightningModule):
             src_mask=torch.cat([src_mask]*2)
             
             for t in self.test_scheduler.timesteps:
+                # print(t)
                 latens=torch.cat([latens_]*2)
                 timestep=torch.full((latens.shape[0],),t).to(self.device)
 
@@ -260,14 +262,11 @@ class People_Background(pl.LightningModule):
     def validation_step(self,batch,batch_idx):
 
         background_img,people_vae,people_clip,img,src_mask,target_pose_cond=batch
-
-
         img=img.to(torch.float16).to(self.device)
         people_vae=people_vae.to(torch.float16).to(self.device)
         people_clip=people_clip.to(torch.float16).to(self.device)
         background_img=background_img.to(torch.float16).to(self.device)
         src_mask=src_mask.to(torch.float16).to(self.device)
-
         target_pose_cond=target_pose_cond.to(torch.float16).to(self.device)
         
         target_img=self.sample(people_vae,people_clip,background_img,src_mask,target_pose_cond)
@@ -292,7 +291,7 @@ class People_Background(pl.LightningModule):
 
 
         img=img.detach().cpu()
-        pose_img=pose_img.detach().cpu()
+        pose_img=target_pose_cond.detach().cpu()
         target_img=target_img.detach().cpu()
 
         file_dir=os.path.join(self.out_path,str(self.global_step))
@@ -322,8 +321,10 @@ class People_Background(pl.LightningModule):
     
     def configure_optimizers(self):
 
-        params =[i  for i in (list(self.people_proj.parameters())+list(self.unet.parameters())
-                +list(self.AppearceNet.parameters()+list(self.controlnet_pose.parameters())))   #list(self.controlnet_cond_embedding.parameters()
+        params =[i  for i in (
+                # list(self.people_proj.parameters())+list(self.unet.parameters())
+                # +list(self.AppearceNet.parameters())+
+                list(self.controlnet_pose.parameters()))   #list(self.controlnet_cond_embedding.parameters()
                 if i.requires_grad==True ]
         optim = torch.optim.AdamW(params, lr=self.lr)
         lambda_lr=lambda step: max(((self.global_step)/self.warm_up),5e-3) if (self.global_step)< self.warm_up else  1.0
@@ -344,10 +345,10 @@ class People_Background(pl.LightningModule):
 
 
 train_list=[
-    '/data/zwplus/tiktok/train/train_new_mask.txt',
+    '/data/zwplus/tiktok/train/train_new_mask_2.txt',
 ]
 test_list=[
-    '/data/zwplus/tiktok/test/test_new_mask.txt',
+    '/data/zwplus/tiktok/test/test_new_mask_2.txt',
 ]
 
 
@@ -357,11 +358,11 @@ if __name__=='__main__':
     train_dataset=diffusion_dataset(train_list)
     test_dataset=diffusion_dataset(test_list,if_train=False)
 
-    batch_size=32
+    batch_size=16
     logger=WandbLogger(save_dir='/home/user/zwplus/pbp_inpainting_mask_pre/',project='pose_inpainting_mask')
 
-    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=32)
-    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=32,drop_last=True)
+    train_loader=DataLoader(train_dataset,batch_size=batch_size,shuffle=True,pin_memory=True,num_workers=24)
+    val_loader=DataLoader(test_dataset,batch_size=batch_size,pin_memory=True,num_workers=24,drop_last=True)
 
     
     unet_config={
@@ -401,7 +402,7 @@ if __name__=='__main__':
     model=People_Background(unet_config,pose_net_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
                             vae_path=vae_path,out_path='/data/zwplus/pbp_inpainting/pose_inpainting_mask/output',condition_guidance=7.5,batch_size=batch_size,
                             warm_up=2000,learning_rate=1e-4)
-    # model.load_state_dict(torch.load('/data/zwplus/pbp_inpainting/pose_inpainting_mask/checkpoint/pndm-epoch=099-fid=35.156-ssim=0.669.ckpt/99.bin'),strict=False)
+    model.load_state_dict(torch.load('/data/zwplus/pbp_inpainting/pose_inpainting_mask/checkpoint/pndm-epoch=015-fid=6.223-ssim=0.949.ckpt/15_512.bin'),strict=False)
     
 
     checkpoint_callback = pl.callbacks.ModelCheckpoint(dirpath="/data/zwplus/pbp_inpainting/pose_inpainting_mask/checkpoint", 
@@ -412,8 +413,8 @@ if __name__=='__main__':
         accelerator='gpu',devices=2,logger=logger,callbacks=[checkpoint_callback],
         default_root_dir='/data/zwplus/pbp_inpainting/pose_inpainting_mask/checkpoint',
         strategy=DeepSpeedStrategy(logging_level=logging.INFO,allgather_bucket_size=5e8,reduce_bucket_size=5e8),
-        precision='16-mixed', 
-        accumulate_grad_batches=2,check_val_every_n_epoch=5,
+        precision='16-mixed',num_sanity_val_steps=2,
+        accumulate_grad_batches=4,check_val_every_n_epoch=3,
         log_every_n_steps=200,max_epochs=600,
         profiler='simple',benchmark=True,gradient_clip_val=1) 
     
