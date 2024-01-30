@@ -37,7 +37,7 @@ from control_net import ControlNetConditioningEmbedding
 import wandb
 
 
-from tiktok_dataset_2 import diffusion_dataset
+from tiktok_dataset_3 import diffusion_dataset
 from pytorch_lightning.loggers import WandbLogger
 
 seed_everything(1024)
@@ -168,6 +168,8 @@ class People_Background(pl.LightningModule):
         cross_attn_states=torch.cat([people_clip,back_clip],dim=1)
         cross_attn_states=cross_attn_states if random.random() > self.condition_rate else torch.zeros_like(cross_attn_states,dtype=torch.float16).to(self.device)
         pose_laten=pose_laten if random.random() > self.condition_rate else torch.zeros_like(pose_laten,dtype=torch.float16).to(self.device)
+        background=background if random.random() > self.condition_rate else torch.zeros_like(background,dtype=torch.float16).to(self.device)
+
 
         target=self.img_to_laten(img)[0] 
         noise=torch.randn(target.shape,dtype=torch.float16).to(self.device)
@@ -223,7 +225,7 @@ class People_Background(pl.LightningModule):
             cond_people_laten=self.img_to_laten(people_vae)[0]
 
             cond_back=self.img_to_laten(background_img)[0]
-            back=torch.cat([cond_back,cond_back])
+            back=torch.cat([cond_back,torch.zeros_like(cond_back).to(torch.float16).to(self.device)])
 
             
             for t in self.test_scheduler.timesteps:
@@ -285,9 +287,14 @@ class People_Background(pl.LightningModule):
 
         file_dir=os.path.join(self.out_path,str(self.global_step))
         os.makedirs(file_dir,exist_ok=True)
+        src_dir=os.path.join(self.out_path,str(self.global_step)+'_target')
+        os.makedirs(src_dir,exist_ok=True)
         for i in range(target_img.shape[0]):
             save_img=self.tr(target_img[i])
             save_img.save(os.path.join(file_dir,str(self.local_rank)+'_'+str(self.save_img_num)+'.jpg'))
+
+            src_img=self.tr(img[i])
+            src_img.save(os.path.join(src_dir,str(self.local_rank)+'_'+str(self.save_img_num)+'.jpg'))
             self.save_img_num+=1
             if self.save_img_num==1:  
                 h=torch.cat([img[:4],pose_img[:4],target_img[:4]])
@@ -396,8 +403,8 @@ if __name__=='__main__':
     vae_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/vae'
     model=People_Background(unet_config,pose_net_config,people_config,scheduler_path='/home/user/zwplus/pbp_inpainting/sd-2.1/fp32/scheduler',
                             vae_path=vae_path,out_path='/data/zwplus/pbp_inpainting/pose_inpainting_b_a/output',condition_guidance=7.5,batch_size=batch_size,
-                            warm_up=5000,learning_rate=1e-4)
-    model.load_state_dict(torch.load('/data/zwplus/pbp_inpainting/pose_inpainting_b_a/checkpoint/pndm-epoch=039-fid=32.031-ssim=0.677.ckpt/39.ckpt'),strict=False)
+                            warm_up=1000,learning_rate=1e-4)
+    # model.load_state_dict(torch.load('/data/zwplus/pbp_inpainting/pose_inpainting_b_a/checkpoint/pndm-epoch=017-fid=31.016-ssim=0.696.ckpt/17.ckpt'),strict=False)
 
 
     logger.watch(model)
@@ -413,8 +420,8 @@ if __name__=='__main__':
         precision='16-mixed',  
         accumulate_grad_batches=4,check_val_every_n_epoch=3,
         log_every_n_steps=200,max_epochs=600,
-        profiler='simple',benchmark=True,gradient_clip_val=1,) 
+        profiler='simple',benchmark=True,gradient_clip_val=2,) 
 
     
-    trainer.fit(model,train_loader,val_loader) 
+    trainer.fit(model,train_loader,val_loader,ckpt_path='/data/zwplus/pbp_inpainting/pose_inpainting_b_a/checkpoint/pndm-epoch=023-fid=35.125-ssim=0.743.ckpt') 
     wandb.finish()
