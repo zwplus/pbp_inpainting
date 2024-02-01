@@ -15,8 +15,7 @@ class diffusion_dataset(Dataset):
     def __init__(self,data_pairs_txt_list,if_train=True) -> None:
         super().__init__()
         self.data_pairs=[]
-        self.data_dict_back={}
-        self.data_dict_people={}
+        self.data_dict={}
         self.if_train=if_train
         pairs_list=[]
         for i in data_pairs_txt_list:
@@ -26,40 +25,25 @@ class diffusion_dataset(Dataset):
         
         for i in pairs_list:
             i=i.strip()
-            target_img_path,people_img_path,back_image_path,pose_img_path=i.split(',')
-            people_img_path=os.path.splitext(people_img_path)[0]
-            people_img_path=people_img_path.split('/')[:-3]+['groundsam_people_img']+people_img_path.split('/')[-2:]
-            people_img_path='/'.join(people_img_path)+'.png'
+            img_path,mask_img_path,pose_img_path,people_img_path,back_img_path=i.split(',')
 
-            file_dir=target_img_path.split('/')[-2]
-            file_name=target_img_path.split('/')[-1]
+            file_dir=img_path.split('/')[-2]
+            file_name=img_path.split('/')[-1]
             file_name=file_name.split('.')[0]+'.png'
-            back_dir=back_image_path.split('/')[:-1]
-            back_dir.append(file_name)
-            target_back='/'.join(back_dir)
-            people_dir=people_img_path.split('/')[:-1]
-            people_dir.append(file_name)
-            target_people='/'.join(people_dir)
-            
+
             count=0
-            if not ( os.path.isfile(people_img_path) and os.path.isfile(pose_img_path)
-                    and os.path.isfile(back_image_path) and os.path.isfile(target_img_path) and os.path.isfile(target_people) and os.path.isfile(target_back) ):
-                print(people_img_path)
-                print(back_image_path)
-                print(target_people)
-                print(target_back)
+            if not ( os.path.isfile(img_path) and os.path.isfile(pose_img_path)
+                    and os.path.isfile(mask_img_path)):
+                print(img_path)
+                print(mask_img_path)
+                print(pose_img_path)
                 count+=1
             else:
-                self.data_pairs.append((target_img_path,people_img_path,back_image_path,pose_img_path))
-                if people_img_path not in self.data_dict_back.keys():
-                    self.data_dict_back[people_img_path]=[]
-                    self.data_dict_people[people_img_path]=[]
-                self.data_dict_back[people_img_path].append(target_back)
-                self.data_dict_people[people_img_path].append(target_people)
+                self.data_pairs.append((img_path,mask_img_path,pose_img_path,people_img_path,back_img_path))
+                if file_dir not in self.data_dict.keys():
+                    self.data_dict[file_dir]=[]
+                self.data_dict[file_dir].append((people_img_path,back_img_path,mask_img_path))
         print(count)
-        for i in self.data_dict_back.keys():
-            if len(self.data_dict_back[i])==0:
-                print(i)
         
         self.random_square_height = transforms.Lambda(lambda img: transforms.functional.crop(img, top=int(torch.randint(0, img.height - img.width, (1,)).item()), left=0, height=img.width, width=img.width))
         self.random_square_width = transforms.Lambda(lambda img: transforms.functional.crop(img, top=0, left=int(torch.randint(0, img.width - img.height, (1,)).item()), height=img.height, width=img.height))
@@ -87,6 +71,17 @@ class diffusion_dataset(Dataset):
             torchvision.transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])
         ])
 
+        self.transformer_mask=transforms.Compose(
+            [
+            transforms.ToTensor(),
+            transforms.RandomResizedCrop(
+                (512,512),
+                scale=(min_crop_scale, 1.0), ratio=(1., 1.),
+                interpolation=transforms.InterpolationMode.BILINEAR),
+            transforms.Resize((64,64),interpolation=transforms.InterpolationMode.BICUBIC)
+            ]
+        )
+
         self.transformer_clip=CLIPImageProcessor.from_pretrained('/home/user/zwplus/pbp_inpainting/sd-2.1/feature_exract')
         
     def __len__(self,):
@@ -107,20 +102,29 @@ class diffusion_dataset(Dataset):
 
     def __getitem__(self, index):
         try:
-            raw,people,back,pose=self.data_pairs[index]
+            raw,_,pose,_,_=self.data_pairs[index]
+            file_dir=raw.split('/')[-2]
             pose=Image.open(pose)
             raw=Image.open(raw)
             if self.if_train==False:
+                people,back,back_mask=self.data_dict[file_dir][0]
                 people=Image.open(people)
                 back=Image.open(back)
+                back_mask=Image.open(back_mask)
+                back_mask =back_mask.convert("L") 
+                dense_mask=pose.convert("L")
+
                 transform1=None
             else:
-                back_index=random.randint(0,len(self.data_dict_back[people])-1)
-                # print(len(self.data_dict_back[people]))
-                back=self.data_dict_back[people][back_index]
+                back_index=random.randint(0,len(self.data_dict[file_dir])-1)
+                people,back,back_mask=self.data_dict[file_dir][back_index]
                 back=Image.open(back)
-                people_index=random.randint(0,len(self.data_dict_people[people])-1)
-                people=self.data_dict_people[people][people_index]
+
+                back_mask=Image.open(back_mask)
+                back_mask = back_mask.convert("L") 
+                dense_mask=pose.convert("L")
+
+                # people_index=random.randint(0,len(self.data_dict[file_dir])-1)
                 people=Image.open(people)
 
                 if raw.size[0]>raw.size[1]:  # w>h
@@ -135,21 +139,28 @@ class diffusion_dataset(Dataset):
 
             raw=self.augmentation(raw, transform1, self.transformer_ae, state)
             pose=self.augmentation(pose, transform1, self.cond_transform, state)
+
+
             people_vae=self.augmentation(people,transform1,self.transformer_ae,state)
             people_clip=self.augmentation(people,transform1,self.transformer_clip,state).pixel_values[0]
             
             back_vae=self.augmentation(back,transform1,self.transformer_ae,state)
             back_clip=self.augmentation(back,transform1,self.transformer_clip,state).pixel_values[0]
-            
+            back_mask=self.augmentation(back_mask,transform1,self.transformer_mask,state)
+            back_mask[back_mask>=0.5]=1
+            back_mask[back_mask<0]=0
+
+            dense_mask=self.augmentation(dense_mask, transform1, self.transformer_mask, state)
+            dense_mask[dense_mask>=0.5]=1
+            dense_mask[dense_mask<0]=0
             
         except Exception as e:
-            print(raw)
+            print(file_dir)
             traceback.print_exc()
-        return back_vae,people_vae,people_clip,back_clip,pose,raw
+        return back_vae,people_vae,people_clip,back_clip,pose,raw,dense_mask,back_mask
 
-# t=train_dataset=diffusion_dataset([
-#     '/data/zwplus/tiktok/train/train_new_pose.txt',
-# ])
-# t=iter(t)
-# for i in range(10000):
-#     next(t)
+train_list=[
+    '/data/zwplus/tiktok_image/test_list.txt',
+]
+t=diffusion_dataset(train_list)
+next(iter(t))

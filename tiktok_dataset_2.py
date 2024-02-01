@@ -108,3 +108,4 @@ class diffusion_dataset(Dataset):
             print(raw)
             traceback.print_exc()
         return back_vae,people_vae,people_clip,back_clip,pose,raw
+
