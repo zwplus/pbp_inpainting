@@ -432,7 +432,7 @@ if __name__=='__main__':
         precision='16-mixed',  
         accumulate_grad_batches=4,check_val_every_n_epoch=3,
         log_every_n_steps=200,max_steps=25000*4,
-        profiler='simple',benchmark=True,gradient_clip_val=2,num_sanity_val_steps=2) 
+        profiler='simple',benchmark=True,num_sanity_val_steps=2) 
 
     
     trainer.fit(model,train_loader,val_loader) 
